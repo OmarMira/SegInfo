@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { glob } from 'glob';
 import { collectFiles, DEFAULT_SKIP_DIRS } from '../../util/walk.js';
+import { NothingToScanError } from '../../util/errors.js';
 import { scanTerraform } from './tf-checks.js';
 import { scanK8s } from './k8s-checks.js';
 import type { Finding } from '../../report/sarif.js';
@@ -73,7 +74,9 @@ export async function scanIac(target?: string, options: IacOptions = {}): Promis
   };
 
   const noFilesError = (): Error =>
-    new Error(`No Terraform or Kubernetes files found under ${stat?.isDirectory() ? resolved : cwd}`);
+    new NothingToScanError(
+      `No Terraform or Kubernetes files found under ${stat?.isDirectory() ? resolved : cwd}`,
+    );
 
   if (stat?.isFile()) {
     run(await scanOne(resolved, cwd));

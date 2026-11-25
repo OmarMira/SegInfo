@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { parsePackageLock, parseRequirementsTxt, type Dependency } from './manifest.js';
 import { queryVulnerabilities, type VulnDetail } from './osv.js';
+import { NothingToScanError } from '../../util/errors.js';
 import type { Finding, SarifLevel } from '../../report/sarif.js';
 
 export type { FetchLike, HttpResponse } from './osv.js';
@@ -122,7 +123,7 @@ export async function scanDependencies(
     }
   }
   if (manifests.length === 0) {
-    throw new Error(
+    throw new NothingToScanError(
       `No manifests found: SCA scanning needs ${MANIFESTS.join(' or ')} in ${resolved}`,
     );
   }

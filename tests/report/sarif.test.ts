@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { writeSarif, type Finding } from '../../src/report/sarif.js';
+import { writeSarif, writeMergedSarif, type Finding } from '../../src/report/sarif.js';
 
 const outputs: string[] = [];
 
@@ -81,5 +81,26 @@ describe('writeSarif', () => {
     const returned = writeSarif('leakscan', [], out);
     expect(returned).toBe(path.resolve(out));
     expect(fs.existsSync(returned)).toBe(true);
+  });
+
+  it('merges multiple module runs into a single SARIF document', () => {
+    const out = tmpFile();
+    writeMergedSarif(
+      [
+        { toolName: 'leakscan', findings: sample },
+        { toolName: 'iac', findings: [sample[1]] },
+      ],
+      out,
+    );
+    const doc = JSON.parse(fs.readFileSync(out, 'utf8'));
+    expect(doc.version).toBe('2.1.0');
+    expect(doc.runs).toHaveLength(2);
+    expect(doc.runs[0].tool.driver.name).toBe('secure-scan/leakscan');
+    expect(doc.runs[1].tool.driver.name).toBe('secure-scan/iac');
+    expect(doc.runs[0].results).toHaveLength(2);
+    expect(doc.runs[1].results).toHaveLength(1);
+    expect(doc.runs[1].tool.driver.rules.map((r: { id: string }) => r.id)).toEqual([
+      'leakscan/jwt-token',
+    ]);
   });
 });

@@ -1,0 +1,139 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { minimatch } from 'minimatch';
+import { scanRepo } from '../modules/leakscan/leak-scan-engine.js';
+import { toFindings } from '../modules/leakscan/normalize.js';
+import { scanDependencies } from '../modules/sca/sca-engine.js';
+import { scanIac } from '../modules/iac/iac-engine.js';
+import { NothingToScanError } from '../util/errors.js';
+import { writeMergedSarif, type Finding } from '../report/sarif.js';
+import { loadConfig, type ModuleId, type ScanConfig } from './config.js';
+
+export type ModuleRunner = (
+  target: string | undefined,
+  options: { cwd: string },
+) => Promise<Finding[]>;
+
+/** Real engines, used for any module without an injected runner. */
+const DEFAULT_RUNNERS: Record<ModuleId, ModuleRunner> = {
+  leakscan: async (target, options) => toFindings(await scanRepo(target, { cwd: options.cwd })),
+  sca: (target, options) => scanDependencies(target, { cwd: options.cwd }),
+  iac: (target, options) => scanIac(target, { cwd: options.cwd }),
+};
+
+const LEVEL_RANK: Record<Finding['level'], number> = {
+  none: 0,
+  note: 1,
+  warning: 2,
+  error: 3,
+};
+
+export interface OrchestratorOptions {
+  cwd?: string;
+  /** Pre-loaded config; otherwise loaded from cwd / configPath. */
+  config?: ScanConfig;
+  configPath?: string;
+  /** Injected module runners (tests); defaults to the real engines. */
+  runners?: Partial<Record<ModuleId, ModuleRunner>>;
+}
+
+export interface ModuleSkip {
+  module: ModuleId;
+  reason: string;
+}
+
+export interface ModuleFailure {
+  module: ModuleId;
+  message: string;
+}
+
+export interface OrchestratorResult {
+  exitCode: 0 | 1;
+  /** Findings after the ignore filter, across all modules. */
+  totalFindings: number;
+  findings: Finding[];
+  skipped: ModuleSkip[];
+  failures: ModuleFailure[];
+  outputPath: string;
+}
+
+function isDirectory(p: string): boolean {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Runs every enabled module in parallel, merges their findings into a single
+ * SARIF document and computes an honest exit code:
+ *
+ * - a module that throws NothingToScanError is reported as skipped;
+ * - any other module failure forces exit 1 (an outage is never a clean scan);
+ * - otherwise exit 1 when a kept finding reaches the `failOn` threshold.
+ *
+ * @param target scan root directory (or undefined for cwd). Files and globs
+ *               belong to the single-module modes.
+ * @throws on a non-directory target or an invalid/missing explicit config.
+ */
+export async function runOrchestrator(
+  target?: string,
+  options: OrchestratorOptions = {},
+): Promise<OrchestratorResult> {
+  const cwd = options.cwd ?? process.cwd();
+  // Scan root: everything (config discovery, module cwd, relative finding
+  // paths, output resolution) anchors to the directory being scanned.
+  const absTarget = target ? path.resolve(cwd, target) : cwd;
+
+  if (target && !isDirectory(absTarget)) {
+    throw new Error(
+      `Orchestrator target must be a directory: ${target} ` +
+        '(use --mode leakscan|sca|iac for files or glob patterns)',
+    );
+  }
+
+  const config =
+    options.config ?? loadConfig({ cwd, searchDir: absTarget, configPath: options.configPath });
+
+  const enabled = config.modules;
+  const settled = await Promise.allSettled(
+    enabled.map(async (id) => {
+      const runner = options.runners?.[id] ?? DEFAULT_RUNNERS[id];
+      return { id, findings: await runner(absTarget, { cwd: absTarget }) };
+    }),
+  );
+
+  const skipped: ModuleSkip[] = [];
+  const failures: ModuleFailure[] = [];
+  const ran: Array<{ id: ModuleId; findings: Finding[] }> = [];
+
+  settled.forEach((result, i) => {
+    const id = enabled[i];
+    if (result.status === 'fulfilled') {
+      ran.push(result.value);
+      return;
+    }
+    const err = result.reason;
+    const message = err instanceof Error ? err.message : String(err);
+    if (err instanceof NothingToScanError) skipped.push({ module: id, reason: message });
+    else failures.push({ module: id, message });
+  });
+
+  const notIgnored = (f: Finding): boolean =>
+    !config.ignore.some((pattern) => minimatch(f.file, pattern, { dot: true }));
+
+  const runs = ran.map((entry) => ({
+    toolName: entry.id,
+    findings: entry.findings.filter(notIgnored),
+  }));
+  const findings = runs.flatMap((run) => run.findings);
+
+  const outputPath = writeMergedSarif(runs, path.resolve(absTarget, config.output));
+
+  const threshold = LEVEL_RANK[config.failOn];
+  const failsOnSeverity = findings.some((f) => LEVEL_RANK[f.level] >= threshold);
+  const exitCode: 0 | 1 = failures.length > 0 || failsOnSeverity ? 1 : 0;
+
+  return { exitCode, totalFindings: findings.length, findings, skipped, failures, outputPath };
+}

@@ -25,8 +25,8 @@
 | T1 | S1, S4, S5 | inline | done | febcf9b |
 | T2 | S1, S2, S5 | inline | done | 0061a9e |
 | T3 | S1, S2, S5 | inline | done | ec6f208 |
-| T4 | S1, S2, S5 | inline | done | (this commit) |
-| T5 | S1, S4, S5 | inline | pending | — |
+| T4 | S1, S2, S5 | inline | done | 396cf58 |
+| T5 | S1, S4, S5 | inline | done | (this commit) |
 | T6 | S3, S5 | inline | pending | — |
 | T7 | All | inline | pending | — |
 
@@ -45,3 +45,5 @@
 **L6** — (2026-11-24) T3 done (SCA + OSV): lockfile v3/v1 parsers with exact line numbers (O(n) key→line index), requirements.txt pin parser, OSV client (querybatch 500/batch → per-id detail with concurrency 8, cap 200, 15s timeouts, zod validation, injected fetch for tests), severity→SARIF level mapping, remediation from `affected[].ranges[].fixed` filtered by exact package+ecosystem. Network failures throw (never fake a clean scan). Verified live against api.osv.dev: own package-lock reported clean. Lint rule `preserve-caught-error` satisfied via `cause`. 39/39 tests.
 
 **L7** — (2026-11-24) T4 done (IaC): shared walker extracted to `src/util/walk.ts` (single source for symlink-skip/noise-dirs/depth/count limits + filename filters; leakscan refactored onto it with zero behavior change, its 24 tests proving it). Terraform: line-oriented HCL block scanner (comment/string stripping, brace-depth resource scoping) — s3-public-acl (error), sg-open-to-world (warning), sg-sensitive-port-open for 22/3389 (error), tf-hardcoded-secret with `${...}` reference exclusion; never prints the secret value. Kubernetes: js-yaml parsing with sequential-marker line recovery for multi-doc files — k8s-privileged-container, k8s-host-network, k8s-plaintext-env-secret (valueFrom excluded), Helm `{{` templates skipped. Engine discovers .tf/.yaml/.yml recursively, throws when no IaC files exist (never fakes a clean scan), invalid YAML reports the offending file. 60/60 tests; live smoke on fixture found all 4 misconfigs with exit=1.
+
+**L8** — (2026-11-24) T5 done (orchestrator + CLI): `runOrchestrator` runs enabled modules via Promise.allSettled (parallelism proven by a rendezvous test that deadlocks if sequential), merges one SARIF with one run per module (`writeMergedSarif`/`buildSarif` extracted, single-module API unchanged). Honest semantics: `NothingToScanError` (new shared class; sca no-manifest + iac no-files now throw it) = skip with reason, any other module failure = exit 1 + stderr, severity threshold `failOn` (error|warning|note, default warning) drives exit code, ignored findings never fail the run. Zod v4 config (`secure-scan.config.json` in the scanned directory, `--config` explicit path): modules subset, output, failOn, ignore (minimatch). Scan root anchors everything: config discovery, module cwd (fixes sca paths shown relative to project instead of target), output path. CLI default mode is now `all` with `--config`; module modes unchanged; `toFindings` normalization extracted and shared. 85/85 tests; smoke: fixture config honored (sca excluded), merged SARIF target-relative, repo self-scan shows iac skipped-with-reason and exit=1.
