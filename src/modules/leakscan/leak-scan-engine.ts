@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { glob } from 'glob';
+import { collectFiles, matchesFilters, type FileFilters } from '../../util/walk.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -104,32 +105,6 @@ function hasCleanBoundary(line: string, index: number, length: number): boolean 
   );
 }
 
-const SKIP_DIRS = new Set([
-  '.git',
-  'node_modules',
-  'dist',
-  'build',
-  'coverage',
-  '.venv',
-  'venv',
-  '.next',
-  '.cache',
-  '.gradle',
-  'target',
-  '__pycache__',
-  '.terraform',
-  'bower_components',
-]);
-
-const GLOB_IGNORE = [
-  '**/.git/**',
-  '**/node_modules/**',
-  '**/dist/**',
-  '**/coverage/**',
-  '**/.venv/**',
-  '**/vendor/**',
-];
-
 const DEFAULT_EXTS = new Set([
   '.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts',
   '.py', '.rb', '.go', '.java', '.php', '.cs', '.pl', '.rs',
@@ -156,8 +131,6 @@ const DEFAULTS = {
   maxCommits: 500,
 };
 
-const MAX_DEPTH = 32;
-const MAX_FILES = 50_000;
 const MAX_LINE_LENGTH = 10_000;
 const GIT_GREP_BATCH = 50;
 const MIN_SECRET_LENGTH = 16;
@@ -202,43 +175,21 @@ function matchLine(line: string): { type: string; entropy: number } | null {
   return null;
 }
 
-function isScannable(filePath: string): boolean {
-  const base = path.basename(filePath);
-  if (base.startsWith('.env')) return true;
-  if (SECRET_FILENAMES.has(base)) return true;
-  return DEFAULT_EXTS.has(path.extname(base).toLowerCase());
-}
+/** What counts as a secret carrier, in one place for walk + glob modes. */
+const LEAKSCAN_FILTERS: FileFilters = {
+  extensions: DEFAULT_EXTS,
+  filenames: SECRET_FILENAMES,
+  basenamePrefixes: ['.env'],
+};
 
-/**
- * Breadth-first walk that never follows symlinks (a malicious repo could
- * otherwise point one at /etc/shadow or loop forever) and skips known
- * noise directories.
- */
-async function collectFiles(root: string): Promise<string[]> {
-  const out: string[] = [];
-  const queue: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }];
-  while (queue.length > 0) {
-    const { dir, depth } = queue.shift()!;
-    if (depth > MAX_DEPTH) continue;
-    let entries: fs.Dirent[];
-    try {
-      entries = await fs.promises.readdir(dir, { withFileTypes: true });
-    } catch {
-      continue; // unreadable directory: skip, never crash the scan
-    }
-    for (const entry of entries) {
-      if (out.length >= MAX_FILES) return out;
-      if (entry.isSymbolicLink()) continue;
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        if (!SKIP_DIRS.has(entry.name)) queue.push({ dir: full, depth: depth + 1 });
-      } else if (entry.isFile() && isScannable(full)) {
-        out.push(full);
-      }
-    }
-  }
-  return out;
-}
+const GLOB_IGNORE = [
+  '**/.git/**',
+  '**/node_modules/**',
+  '**/dist/**',
+  '**/coverage/**',
+  '**/.venv/**',
+  '**/vendor/**',
+];
 
 async function scanFile(
   abs: string,
@@ -405,7 +356,7 @@ export async function scanRepo(
     });
     for (const rel of matches) {
       const abs = path.resolve(cwd, rel);
-      if (!isScannable(abs)) continue;
+      if (!matchesFilters(abs, LEAKSCAN_FILTERS)) continue;
       findings.push(...(await scanFile(abs, cwd, maxFileBytes)));
     }
     if (gitHistory) findings.push(...(await scanHistory(cwd, maxCommits)));
@@ -413,7 +364,7 @@ export async function scanRepo(
   }
 
   const root = resolved;
-  const files = await collectFiles(root);
+  const files = await collectFiles(root, LEAKSCAN_FILTERS);
   for (const file of files) {
     findings.push(...(await scanFile(file, root, maxFileBytes)));
   }

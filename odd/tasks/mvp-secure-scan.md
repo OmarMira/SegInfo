@@ -24,8 +24,8 @@
 |----|---------|-------|--------|--------|
 | T1 | S1, S4, S5 | inline | done | febcf9b |
 | T2 | S1, S2, S5 | inline | done | 0061a9e |
-| T3 | S1, S2, S5 | inline | done | (this commit) |
-| T4 | S1, S2, S5 | inline | pending | — |
+| T3 | S1, S2, S5 | inline | done | ec6f208 |
+| T4 | S1, S2, S5 | inline | done | (this commit) |
 | T5 | S1, S4, S5 | inline | pending | — |
 | T6 | S3, S5 | inline | pending | — |
 | T7 | All | inline | pending | — |
@@ -43,3 +43,5 @@
 **L5** — (2026-11-24) T2 done: leakscan engine rewritten test-first (24 tests). Fixes: BFS walker with correct nested paths (old readdir-recursive basename bug), skips .git/node_modules/dist, never follows symlinks (malicious-repo escape guard), file-size/line-length/depth/count limits, 13 precise secret patterns (old FP-heavy `39+ chars` pattern removed) + entropy/digit-letter plausibility for keyword matches, blob-boundary validation (kills `gho...`-inside-sha512 FPs), real git-history scan via `git grep -E` batches (execFile, no shell), dedupe prefers working-tree, secrets never printed raw. Self-scan: only test fixtures flagged; package-lock and source clean.
 
 **L6** — (2026-11-24) T3 done (SCA + OSV): lockfile v3/v1 parsers with exact line numbers (O(n) key→line index), requirements.txt pin parser, OSV client (querybatch 500/batch → per-id detail with concurrency 8, cap 200, 15s timeouts, zod validation, injected fetch for tests), severity→SARIF level mapping, remediation from `affected[].ranges[].fixed` filtered by exact package+ecosystem. Network failures throw (never fake a clean scan). Verified live against api.osv.dev: own package-lock reported clean. Lint rule `preserve-caught-error` satisfied via `cause`. 39/39 tests.
+
+**L7** — (2026-11-24) T4 done (IaC): shared walker extracted to `src/util/walk.ts` (single source for symlink-skip/noise-dirs/depth/count limits + filename filters; leakscan refactored onto it with zero behavior change, its 24 tests proving it). Terraform: line-oriented HCL block scanner (comment/string stripping, brace-depth resource scoping) — s3-public-acl (error), sg-open-to-world (warning), sg-sensitive-port-open for 22/3389 (error), tf-hardcoded-secret with `${...}` reference exclusion; never prints the secret value. Kubernetes: js-yaml parsing with sequential-marker line recovery for multi-doc files — k8s-privileged-container, k8s-host-network, k8s-plaintext-env-secret (valueFrom excluded), Helm `{{` templates skipped. Engine discovers .tf/.yaml/.yml recursively, throws when no IaC files exist (never fakes a clean scan), invalid YAML reports the offending file. 60/60 tests; live smoke on fixture found all 4 misconfigs with exit=1.
