@@ -22,9 +22,9 @@
 
 | ID | Spec(s) | Route | Status | Commit |
 |----|---------|-------|--------|--------|
-| T1 | S1, S4, S5 | inline | done | slice-1 |
-| T2 | S1, S2, S5 | inline | done | (see commit) |
-| T3 | S1, S2, S5 | inline | pending | — |
+| T1 | S1, S4, S5 | inline | done | febcf9b |
+| T2 | S1, S2, S5 | inline | done | 0061a9e |
+| T3 | S1, S2, S5 | inline | done | (this commit) |
 | T4 | S1, S2, S5 | inline | pending | — |
 | T5 | S1, S4, S5 | inline | pending | — |
 | T6 | S3, S5 | inline | pending | — |
@@ -41,3 +41,5 @@
 **L4** — (2026-11-24) T1 done (commit febcf9b): tsconfig(+build), ESLint 10 flat config, unified Finding contract, honest not-implemented stubs, npm audit cleaned from 8 vulnerabilities (2 critical) to 0 by upgrading vitest/vite/eslint/zod/glob and removing the nonexistent `sarif` package.
 
 **L5** — (2026-11-24) T2 done: leakscan engine rewritten test-first (24 tests). Fixes: BFS walker with correct nested paths (old readdir-recursive basename bug), skips .git/node_modules/dist, never follows symlinks (malicious-repo escape guard), file-size/line-length/depth/count limits, 13 precise secret patterns (old FP-heavy `39+ chars` pattern removed) + entropy/digit-letter plausibility for keyword matches, blob-boundary validation (kills `gho...`-inside-sha512 FPs), real git-history scan via `git grep -E` batches (execFile, no shell), dedupe prefers working-tree, secrets never printed raw. Self-scan: only test fixtures flagged; package-lock and source clean.
+
+**L6** — (2026-11-24) T3 done (SCA + OSV): lockfile v3/v1 parsers with exact line numbers (O(n) key→line index), requirements.txt pin parser, OSV client (querybatch 500/batch → per-id detail with concurrency 8, cap 200, 15s timeouts, zod validation, injected fetch for tests), severity→SARIF level mapping, remediation from `affected[].ranges[].fixed` filtered by exact package+ecosystem. Network failures throw (never fake a clean scan). Verified live against api.osv.dev: own package-lock reported clean. Lint rule `preserve-caught-error` satisfied via `cause`. 39/39 tests.
