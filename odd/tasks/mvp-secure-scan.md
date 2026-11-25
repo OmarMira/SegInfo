@@ -23,7 +23,7 @@
 | ID | Spec(s) | Route | Status | Commit |
 |----|---------|-------|--------|--------|
 | T1 | S1, S4, S5 | inline | done | slice-1 |
-| T2 | S1, S2, S5 | inline | pending | — |
+| T2 | S1, S2, S5 | inline | done | (see commit) |
 | T3 | S1, S2, S5 | inline | pending | — |
 | T4 | S1, S2, S5 | inline | pending | — |
 | T5 | S1, S4, S5 | inline | pending | — |
@@ -37,3 +37,7 @@
 **L2** — (2026-11-24) User: "empieza punto por punto controlando cada uno para que no quede nada pendiente, y cero problemas de seguridad, recorda que es un sistema para controlar seguridad informatica de sistemas" — authorize full implementation of T1–T7, each task verified before the next, security-first posture (the scanner itself must not introduce vulnerabilities).
 
 **L3** — (2026-11-24) Full gap analysis (read-only): build broken (missing tsconfig, broken imports, type mismatch leakscan→sarif), functional bugs (readdir recursive basename path bug, scans .git/node_modules, --files treated as dir, all modules overwrite same SARIF, exit code ignores severity, no git history), zero tests, zero commits. Plan: Fase 0 scaffold → T2 secrets → T3 SCA/OSV → T4 IaC → T5 orchestrator → T6 GitHub Action → T7 verification.
+
+**L4** — (2026-11-24) T1 done (commit febcf9b): tsconfig(+build), ESLint 10 flat config, unified Finding contract, honest not-implemented stubs, npm audit cleaned from 8 vulnerabilities (2 critical) to 0 by upgrading vitest/vite/eslint/zod/glob and removing the nonexistent `sarif` package.
+
+**L5** — (2026-11-24) T2 done: leakscan engine rewritten test-first (24 tests). Fixes: BFS walker with correct nested paths (old readdir-recursive basename bug), skips .git/node_modules/dist, never follows symlinks (malicious-repo escape guard), file-size/line-length/depth/count limits, 13 precise secret patterns (old FP-heavy `39+ chars` pattern removed) + entropy/digit-letter plausibility for keyword matches, blob-boundary validation (kills `gho...`-inside-sha512 FPs), real git-history scan via `git grep -E` batches (execFile, no shell), dedupe prefers working-tree, secrets never printed raw. Self-scan: only test fixtures flagged; package-lock and source clean.

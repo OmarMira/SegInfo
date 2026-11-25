@@ -5,12 +5,17 @@ export async function runScan(files: string | undefined): Promise<void> {
   const raw = await scanRepo(files || undefined);
   const findings: Finding[] = raw.map((f) => ({
     ruleId: `leakscan/${f.type}`,
-    message: `Potential secret (${f.type}), entropy ${f.entropy}`,
+    message: `Potential secret (${f.type}) found in ${f.source}`,
     file: f.file,
     line: f.line,
     column: 1,
     level: 'warning',
-    properties: { entropy: f.entropy, type: f.type },
+    properties: {
+      entropy: f.entropy,
+      type: f.type,
+      source: f.source,
+      ...(f.commit ? { commit: f.commit } : {}),
+    },
   }));
   if (findings.length === 0) {
     console.log('✅ No secrets detected in the repository.');
