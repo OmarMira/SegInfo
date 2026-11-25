@@ -57,7 +57,7 @@ export async function scanIac(target?: string, options: IacOptions = {}): Promis
   const cwd = options.cwd ?? process.cwd();
   const resolved = target ? path.resolve(cwd, target) : cwd;
 
-  let stat: fs.Stats | null = null;
+  let stat: fs.Stats | null;
   try {
     stat = fs.statSync(resolved);
   } catch {
@@ -73,18 +73,20 @@ export async function scanIac(target?: string, options: IacOptions = {}): Promis
     }
   };
 
+  const rootLabel = stat?.isDirectory() ? resolved : cwd;
   const noFilesError = (): Error =>
-    new NothingToScanError(
-      `No Terraform or Kubernetes files found under ${stat?.isDirectory() ? resolved : cwd}`,
-    );
+    new NothingToScanError(`No Terraform or Kubernetes files found under ${rootLabel}`);
 
+  let candidates: number;
   if (stat?.isFile()) {
+    candidates = 1;
     run(await scanOne(resolved, cwd));
   } else if (stat?.isDirectory()) {
     const files = await collectFiles(resolved, {
       extensions: IAC_EXTENSIONS,
       skipDirs: DEFAULT_SKIP_DIRS,
     });
+    candidates = files.length;
     // Paths relative to the scanned root so out-of-cwd targets stay readable.
     for (const file of files) run(await scanOne(file, resolved));
   } else if (target) {
@@ -97,11 +99,22 @@ export async function scanIac(target?: string, options: IacOptions = {}): Promis
       ignore: GLOB_IGNORE,
     });
     if (matches.length === 0) throw noFilesError();
+    candidates = matches.length;
     for (const rel of matches) run(await scanOne(path.resolve(cwd, rel), cwd));
   } else {
     throw noFilesError();
   }
 
-  if (scanned === 0) throw noFilesError();
+  if (scanned === 0) {
+    if (candidates > 0) {
+      // Files existed but every one carried template syntax (Helm/GitHub
+      // Actions) — say that instead of claiming there is nothing to scan.
+      throw new NothingToScanError(
+        `All ${candidates} IaC file(s) under ${rootLabel} were skipped ` +
+          '(template syntax such as Helm or GitHub Actions)',
+      );
+    }
+    throw noFilesError();
+  }
   return findings;
 }

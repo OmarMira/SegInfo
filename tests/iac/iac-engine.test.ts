@@ -61,7 +61,22 @@ describe('scanIac', () => {
       'chart/templates/deploy.yaml',
       'apiVersion: v1\nkind: Deployment\nmetadata:\n  name: {{ .Release.Name }}\n',
     );
-    await expect(scanIac(undefined, { cwd: dir })).rejects.toThrow(/Terraform or Kubernetes/);
+    await expect(scanIac(undefined, { cwd: dir })).rejects.toThrow(/were skipped/);
+  });
+
+  it('skips GitHub Actions workflows (${{ }} expressions) and says so honestly', async () => {
+    write(
+      '.github/workflows/ci.yml',
+      'name: ci\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          token: ${{ github.token }}\n',
+    );
+    await expect(scanIac(undefined, { cwd: dir })).rejects.toThrow(/GitHub Actions/);
+  });
+
+  it('reports plain absence differently from template-only candidates', async () => {
+    write('app.ts', 'export const x = 1;\n');
+    await expect(scanIac(undefined, { cwd: dir })).rejects.toThrow(
+      /No Terraform or Kubernetes files/,
+    );
   });
 
   it('accepts an explicit file target', async () => {

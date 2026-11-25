@@ -1,0 +1,21 @@
+name: secure-scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: SegInfo secure-scan
+        uses: ./
+        with:
+          token: ${{ github.token }}

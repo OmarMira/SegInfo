@@ -1,14 +1,8 @@
 import { z } from 'zod';
+import type { HttpResponse, FetchLike } from '../../util/http.js';
 import type { Dependency } from './manifest.js';
 
-/** Minimal structural type so tests can inject a fake client. */
-export interface HttpResponse {
-  ok: boolean;
-  status: number;
-  json(): Promise<unknown>;
-}
-
-export type FetchLike = (url: string, init?: RequestInit) => Promise<HttpResponse>;
+export type { HttpResponse, FetchLike };
 
 export interface OsvClientOptions {
   fetchImpl?: FetchLike;
