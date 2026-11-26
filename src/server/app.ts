@@ -60,6 +60,9 @@ export interface TriageGroupView {
   level: Finding['level'];
   bucket: TriageBucket;
   reason: string;
+  why: string;
+  evidence: string[];
+  nextStep: string;
   count: number;
   lines: number[];
 }
@@ -90,6 +93,9 @@ function serializeTriage(result: TriageResult): TriageView {
       level: group.level,
       bucket: group.bucket,
       reason: group.reason,
+      why: group.why,
+      evidence: group.evidence,
+      nextStep: group.nextStep,
       count: group.count,
       lines: group.lines,
     })),

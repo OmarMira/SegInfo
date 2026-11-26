@@ -83,6 +83,13 @@ URL for `web`, or `owner/repo` for `repo`) and scan. The page shows triaged
 groups with severity, rule, location and message; skipped modules and failed
 modules are listed honestly instead of being reported as a clean pass.
 
+Hover a row (or focus it with `Tab`) to see why **that specific finding** was
+reported: the rule's explanation in Spanish plus the evidence the module
+captured (secret pattern and entropy, CVE/package/fixed version, container or
+header name, and so on), separate from the triage bucket reason. **Limpiar**
+resets the form, the results and the status for a fresh scan (it also cancels
+an in-flight scan).
+
 Mode `repo` shallow-clones a public Git repository into a temp folder, scans it
 with the default modules and always deletes the clone afterwards. Only `https`
 URLs on GitHub/GitLab/Bitbucket are accepted (no ssh, no credentials). A cloned

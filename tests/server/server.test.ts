@@ -238,12 +238,17 @@ describe('local server: scans', () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as {
         findings: { properties?: { triage?: { bucket: string } } }[];
-        triage: { summary: { likelyExample: number; total: number }; groups: { bucket: string; reason: string }[] };
+        triage: {
+          summary: { likelyExample: number; total: number };
+          groups: { bucket: string; reason: string; why: string; nextStep: string }[];
+        };
       };
       expect(body.triage.summary.total).toBe(1);
       expect(body.triage.summary.likelyExample).toBe(1);
       expect(body.triage.groups[0].bucket).toBe('likely-example');
       expect(body.triage.groups[0].reason).toContain('tests');
+      expect(body.triage.groups[0].why).toContain('sink HTML');
+      expect(body.triage.groups[0].nextStep).toContain('tests');
       expect(body.findings[0].properties?.triage?.bucket).toBe('likely-example');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

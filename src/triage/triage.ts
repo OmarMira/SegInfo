@@ -1,4 +1,5 @@
 import type { Finding } from '../report/sarif.js';
+import { explainFinding } from './explain.js';
 
 /**
  * Triage layer: turns a flat finding list into decision-ready buckets without
@@ -19,6 +20,12 @@ export interface TriagedFinding {
   finding: Finding;
   bucket: TriageBucket;
   reason: string;
+  /** Rule-specific reason the finding was reported (Spanish). */
+  why: string;
+  /** Concrete evidence captured by the module (Spanish, labeled). */
+  evidence: string[];
+  /** What the reader should do with this bucket. */
+  nextStep: string;
 }
 
 export interface TriageGroup {
@@ -29,6 +36,9 @@ export interface TriageGroup {
   level: Finding['level'];
   bucket: TriageBucket;
   reason: string;
+  why: string;
+  evidence: string[];
+  nextStep: string;
   count: number;
   lines: number[];
   findings: TriagedFinding[];
@@ -113,6 +123,15 @@ function reviewReason(ruleId: string): string {
   return 'Requiere revisión manual';
 }
 
+/** What to do next, depending on how much the scanner could prove. */
+export const BUCKET_ADVICE: Record<TriageBucket, string> = {
+  confirmed:
+    'Está catalogada como explotada en el mundo real: actualiza o aplica el mitigante cuanto antes.',
+  review: 'Revisa el punto señalado y decide si el riesgo es real en tu contexto.',
+  'likely-example':
+    'Está en tests, fixtures o ejemplos: probablemente no llega a producción, pero verifícalo antes de descartarlo.',
+};
+
 interface Classification {
   bucket: TriageBucket;
   reason: string;
@@ -152,8 +171,9 @@ function compareGroups(a: TriageGroup, b: TriageGroup): number {
 export function triageFindings(findings: Finding[]): TriageResult {
   const triaged: TriagedFinding[] = findings.map((finding) => {
     const { bucket, reason } = classifyFinding(finding);
+    const { why, evidence } = explainFinding(finding);
     finding.properties = { ...finding.properties, triage: { bucket, reason } };
-    return { finding, bucket, reason };
+    return { finding, bucket, reason, why, evidence, nextStep: BUCKET_ADVICE[bucket] };
   });
 
   const groups = new Map<string, TriageGroup>();
@@ -176,6 +196,9 @@ export function triageFindings(findings: Finding[]): TriageResult {
       level: finding.level,
       bucket,
       reason,
+      why: entry.why,
+      evidence: entry.evidence,
+      nextStep: entry.nextStep,
       count: 1,
       lines: [finding.line],
       findings: [entry],

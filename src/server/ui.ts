@@ -84,10 +84,12 @@ export const UI_HTML = `<!doctype html>
   .picker input { flex: 1 1 auto; min-width: 0; }
   .picker button { flex: 0 0 auto; width: auto; padding-inline: 14px; }
   .field-submit { min-width: 0; }
-  .field-submit button { width: auto; }
+  .actions { display: flex; gap: 8px; align-items: stretch; }
+  .actions button { width: auto; }
   @media (max-width: 760px) {
     form.scan-form { grid-template-columns: 1fr; gap: 12px; }
-    .field-submit button { width: 100%; }
+    .actions { width: 100%; }
+    .actions button { flex: 1 1 0; }
   }
   button.secondary { background: #1b2544; color: var(--text); border-color: var(--border); }
   .modal { position: fixed; inset: 0; background: rgba(4, 8, 18, 0.72); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 10; }
@@ -127,6 +129,32 @@ export const UI_HTML = `<!doctype html>
   .details pre { margin: 0; white-space: pre-wrap; word-break: break-word; color: var(--muted); font-size: 12.5px; }
   .notice { margin: 8px 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); color: var(--muted); font-size: 13.5px; }
   .empty { padding: 28px 8px; text-align: center; color: var(--muted); }
+  .results-hint { margin: 0 0 10px; color: var(--muted); font-size: 13px; }
+  .results-hint[hidden] { display: none; }
+  .tip {
+    position: fixed;
+    z-index: 20;
+    width: max-content;
+    max-width: 380px;
+    background: #0a1124;
+    border: 1px solid #33446e;
+    border-radius: 12px;
+    padding: 12px 14px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--text);
+    box-shadow: 0 16px 38px rgba(0, 0, 0, 0.55);
+    pointer-events: none;
+  }
+  .tip[hidden] { display: none; }
+  .tip-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .tip-rule { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; color: var(--accent); }
+  .tip-title { margin: 10px 0 3px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); }
+  .tip p { margin: 0; }
+  .tip ul { margin: 3px 0 0; padding-left: 16px; color: var(--muted); }
+  .tip li { margin: 2px 0; }
+  .tip .tip-next { margin-top: 6px; color: var(--warning); }
+  .tip .tip-foot { margin-top: 8px; color: var(--muted); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -158,7 +186,10 @@ export const UI_HTML = `<!doctype html>
         </div>
       </div>
       <div class="field field-submit">
-        <button id="run" type="submit">Escanear</button>
+        <div class="actions">
+          <button id="run" type="submit">Escanear</button>
+          <button id="clear" class="secondary" type="button">Limpiar</button>
+        </div>
       </div>
       <p class="hint" id="hint">Carpeta a escanear. Déjalo vacío para escanear la carpeta de trabajo del servidor.</p>
     </form>
@@ -166,8 +197,11 @@ export const UI_HTML = `<!doctype html>
 
   <div id="status" role="status" aria-live="polite"></div>
   <div class="summary" id="summary"></div>
+  <p class="results-hint" id="results-hint" hidden>Pasa el cursor sobre un hallazgo (o enfócalo con Tab) para ver por qué se marcó.</p>
   <div id="results"></div>
 </main>
+
+<div id="tip" class="tip" hidden></div>
 
 <div id="browser" class="modal" hidden>
   <div class="modal-card" role="dialog" aria-modal="true" aria-label="Elegir una carpeta">
@@ -191,10 +225,14 @@ export const UI_HTML = `<!doctype html>
   var modeSelect = document.getElementById('mode');
   var targetInput = document.getElementById('target');
   var runButton = document.getElementById('run');
+  var clearButton = document.getElementById('clear');
   var hint = document.getElementById('hint');
   var status = document.getElementById('status');
   var summary = document.getElementById('summary');
   var results = document.getElementById('results');
+  var tableHint = document.getElementById('results-hint');
+  var tip = document.getElementById('tip');
+  var scanController = null;
 
   var HINTS = {
     all: 'Carpeta a escanear. Déjalo vacío para escanear la carpeta de trabajo del servidor.',
@@ -302,6 +340,33 @@ export const UI_HTML = `<!doctype html>
   });
   syncBrowseVisibility();
 
+  clearButton.addEventListener('click', function () {
+    if (scanController) {
+      scanController.abort();
+      scanController = null;
+    }
+    form.reset();
+    modeSelect.value = 'all';
+    hint.textContent = HINTS.all;
+    targetInput.placeholder = 'Ruta de la carpeta (vacío = carpeta actual)';
+    syncBrowseVisibility();
+    summary.textContent = '';
+    results.textContent = '';
+    tableHint.hidden = true;
+    setStatus('', false);
+    hideTip();
+    modal.hidden = true;
+    browsing = null;
+    modalPath.textContent = '';
+    modalList.textContent = '';
+    modalError.textContent = '';
+    runButton.disabled = false;
+    targetInput.focus();
+  });
+
+  window.addEventListener('scroll', hideTip, true);
+  window.addEventListener('resize', hideTip);
+
   function el(tag, className, text) {
     var node = document.createElement(tag);
     if (className) node.className = className;
@@ -343,6 +408,67 @@ export const UI_HTML = `<!doctype html>
     });
   }
 
+  function hideTip() {
+    tip.hidden = true;
+    tip.textContent = '';
+  }
+
+  function placeTip(x, y) {
+    var pad = 12;
+    var box = tip.getBoundingClientRect();
+    var left = x + 16;
+    var top = y + 18;
+    if (left + box.width + pad > window.innerWidth) left = x - box.width - 16;
+    if (top + box.height + pad > window.innerHeight) top = y - box.height - 18;
+    tip.style.left = Math.max(pad, left) + 'px';
+    tip.style.top = Math.max(pad, top) + 'px';
+  }
+
+  function showTip(group, x, y) {
+    tip.textContent = '';
+
+    var head = el('div', 'tip-head');
+    head.appendChild(el('span', 'badge ' + group.bucket, BUCKET_LABELS[group.bucket] || group.bucket));
+    head.appendChild(el('span', 'tip-rule', group.ruleId));
+    tip.appendChild(head);
+
+    tip.appendChild(el('div', 'tip-title', 'Por qué se marcó'));
+    tip.appendChild(el('p', '', group.why || group.message || ''));
+
+    if (group.evidence && group.evidence.length > 0) {
+      tip.appendChild(
+        el(
+          'div',
+          'tip-title',
+          group.count > 1 ? 'Evidencia (primera coincidencia)' : 'Evidencia',
+        ),
+      );
+      var list = el('ul');
+      group.evidence.forEach(function (line) {
+        list.appendChild(el('li', '', line));
+      });
+      tip.appendChild(list);
+    }
+
+    tip.appendChild(el('div', 'tip-title', 'Categoría de triaje'));
+    tip.appendChild(el('p', '', group.reason || ''));
+    tip.appendChild(el('p', 'tip-next', group.nextStep || ''));
+
+    tip.appendChild(el('div', 'tip-title', 'Ubicación'));
+    tip.appendChild(
+      el(
+        'p',
+        '',
+        group.file + ':' + group.lines[0] +
+          (group.count > 1 ? ' (+' + (group.count - 1) + ' línea(s) más)' : ''),
+      ),
+    );
+
+    tip.appendChild(el('div', 'tip-foot', 'Haz clic en la fila para ver el detalle completo.'));
+    tip.hidden = false;
+    placeTip(x, y);
+  }
+
   function renderGroups(groups) {
     var table = el('table');
     var thead = el('thead');
@@ -371,7 +497,20 @@ export const UI_HTML = `<!doctype html>
 
       var problem = row.appendChild(el('td'));
       problem.appendChild(document.createTextNode(group.message || ''));
-      problem.appendChild(el('span', 'why', group.reason || ''));
+
+      row.tabIndex = 0;
+      row.addEventListener('mouseenter', function (event) {
+        showTip(group, event.clientX, event.clientY);
+      });
+      row.addEventListener('mousemove', function (event) {
+        placeTip(event.clientX, event.clientY);
+      });
+      row.addEventListener('mouseleave', hideTip);
+      row.addEventListener('focus', function () {
+        var rect = row.getBoundingClientRect();
+        showTip(group, rect.left, rect.bottom);
+      });
+      row.addEventListener('blur', hideTip);
 
       var detailsRow = el('tr', 'details');
       detailsRow.hidden = true;
@@ -389,7 +528,10 @@ export const UI_HTML = `<!doctype html>
       }, null, 2)));
       detailsRow.appendChild(cell);
 
-      row.addEventListener('click', function () { detailsRow.hidden = !detailsRow.hidden; });
+      row.addEventListener('click', function () {
+        hideTip();
+        detailsRow.hidden = !detailsRow.hidden;
+      });
       tbody.appendChild(row);
       tbody.appendChild(detailsRow);
     });
@@ -414,17 +556,24 @@ export const UI_HTML = `<!doctype html>
     runButton.disabled = true;
     summary.textContent = '';
     results.textContent = '';
+    tableHint.hidden = true;
+    hideTip();
+    if (scanController) scanController.abort();
+    var controller = new AbortController();
+    scanController = controller;
     setStatus('Escaneando' + (target ? ': ' + target : ' la carpeta de trabajo') + '…', false);
 
     fetch('/api/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode: mode, target: target })
+      body: JSON.stringify({ mode: mode, target: target }),
+      signal: controller.signal
     })
       .then(function (response) {
         return response.json().then(function (body) { return { ok: response.ok, body: body }; });
       })
       .then(function (result) {
+        if (scanController !== controller) return;
         if (!result.ok) throw new Error(result.body && result.body.error ? result.body.error : 'El escaneo falló');
         var data = result.body;
         var groups = data.triage ? data.triage.groups : [];
@@ -434,10 +583,13 @@ export const UI_HTML = `<!doctype html>
           results.appendChild(el('div', 'empty', 'No se encontraron hallazgos en este objetivo.'));
         } else {
           renderGroups(groups);
+          tableHint.hidden = false;
         }
         setStatus('Escaneado ' + data.target + ' en ' + data.elapsedMs + ' ms', false);
       })
       .catch(function (error) {
+        if (error && error.name === 'AbortError') return;
+        if (scanController !== controller) return;
         setStatus(error && error.message ? error.message : String(error), true);
       })
       .then(function () {
