@@ -95,6 +95,10 @@ export const UI_HTML = `<!doctype html>
   .badge.warning { background: rgba(255, 176, 32, 0.16); color: var(--warning); }
   .badge.note { background: rgba(76, 201, 240, 0.16); color: var(--note); }
   .badge.none { background: rgba(147, 160, 189, 0.16); color: var(--muted); }
+  .badge.confirmed { background: rgba(53, 208, 127, 0.16); color: var(--ok); }
+  .badge.review { background: rgba(255, 176, 32, 0.16); color: var(--warning); }
+  .badge.likely-example { background: rgba(147, 160, 189, 0.16); color: var(--muted); }
+  .why { color: var(--muted); font-size: 12.5px; display: block; margin-top: 3px; }
   .rule { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12.5px; color: var(--accent); }
   .loc { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12.5px; color: var(--muted); word-break: break-all; }
   .details { background: #0a1124; }
@@ -119,6 +123,7 @@ export const UI_HTML = `<!doctype html>
           <option value="sca">Dependencies (sca)</option>
           <option value="iac">IaC (terraform / k8s)</option>
           <option value="sast">Source code (SAST)</option>
+          <option value="repo">GitHub / Git repo (clone &amp; scan)</option>
           <option value="web">Live URL (web)</option>
         </select>
       </label>
@@ -164,7 +169,6 @@ export const UI_HTML = `<!doctype html>
   var status = document.getElementById('status');
   var summary = document.getElementById('summary');
   var results = document.getElementById('results');
-  var LEVEL_ORDER = { error: 0, warning: 1, note: 2, none: 3 };
 
   var HINTS = {
     all: 'Directory to scan. Leave empty to scan the server\\'s working directory.',
@@ -172,13 +176,19 @@ export const UI_HTML = `<!doctype html>
     sca: 'Directory containing package-lock.json or requirements.txt.',
     iac: 'Directory (or file/glob) with Terraform or Kubernetes manifests.',
     sast: 'Directory (or file/glob) with JavaScript/TypeScript or Python sources.',
+    repo: 'Public GitHub/GitLab/Bitbucket repository: owner/repo or https://github.com/owner/repo. Cloned shallow to a temp folder and deleted after the scan.',
     web: 'Full URL to analyze, for example https://example.com (only scan sites you own or are authorized to test).'
   };
 
   modeSelect.addEventListener('change', function () {
     var mode = modeSelect.value;
     hint.textContent = HINTS[mode] || '';
-    targetInput.placeholder = mode === 'web' ? 'https://example.com' : 'Directory path (empty = current directory)';
+    var isUrl = mode === 'web';
+    targetInput.placeholder = isUrl
+      ? 'https://example.com'
+      : mode === 'repo'
+        ? 'owner/repo or https://github.com/owner/repo'
+        : 'Directory path (empty = current directory)';
     syncBrowseVisibility();
   });
 
@@ -193,7 +203,7 @@ export const UI_HTML = `<!doctype html>
   var browsing = null;
 
   function syncBrowseVisibility() {
-    browseButton.hidden = modeSelect.value === 'web';
+    browseButton.hidden = modeSelect.value === 'web' || modeSelect.value === 'repo';
   }
 
   function loadDirectory(dirPath) {
@@ -267,15 +277,16 @@ export const UI_HTML = `<!doctype html>
 
   function renderSummary(data) {
     summary.textContent = '';
-    var counts = { error: 0, warning: 0, note: 0, none: 0 };
-    data.findings.forEach(function (f) { counts[f.level] = (counts[f.level] || 0) + 1; });
-    var chips = [
-      ['Findings', data.findings.length],
-      ['Errors', counts.error],
-      ['Warnings', counts.warning],
-      ['Notes', counts.note],
-      ['Time', data.elapsedMs + ' ms']
-    ];
+    var triage = data.triage ? data.triage.summary : null;
+    var chips = triage
+      ? [
+          ['Confirmed', triage.confirmed],
+          ['Review', triage.review],
+          ['Likely example', triage.likelyExample],
+          ['Total', triage.total],
+          ['Time', data.elapsedMs + ' ms']
+        ]
+      : [['Findings', data.findings.length], ['Time', data.elapsedMs + ' ms']];
     chips.forEach(function (pair) {
       var chip = el('span', 'chip', pair[0]);
       chip.appendChild(el('b', '', pair[1]));
@@ -293,36 +304,46 @@ export const UI_HTML = `<!doctype html>
     });
   }
 
-  function renderTable(findings) {
+  function renderGroups(groups) {
     var table = el('table');
     var thead = el('thead');
     var headRow = el('tr');
-    ['Level', 'Rule', 'Location', 'Message'].forEach(function (label) {
+    ['Triage', 'Level', 'Rule', 'Location', 'Problem'].forEach(function (label) {
       headRow.appendChild(el('th', '', label));
     });
     thead.appendChild(headRow);
     table.appendChild(thead);
 
     var tbody = el('tbody');
-    findings.forEach(function (f) {
+    groups.forEach(function (group) {
       var row = el('tr');
-      row.appendChild(el('td')).appendChild(el('span', 'badge ' + (f.level || 'none'), f.level || 'none'));
-      row.appendChild(el('td')).appendChild(el('span', 'rule', f.ruleId));
-      row.appendChild(el('td')).appendChild(el('span', 'loc', f.file + ':' + f.line));
-      row.appendChild(el('td', '', f.message || ''));
+      row.appendChild(el('td')).appendChild(el('span', 'badge ' + group.bucket, group.bucket));
+
+      var levelCell = row.appendChild(el('td'));
+      levelCell.appendChild(el('span', 'badge ' + (group.level || 'none'), group.level || 'none'));
+
+      row.appendChild(el('td')).appendChild(el('span', 'rule', group.ruleId));
+
+      var where = group.file + ':' + group.lines[0] + (group.count > 1 ? '  x' + group.count : '');
+      row.appendChild(el('td')).appendChild(el('span', 'loc', where));
+
+      var problem = row.appendChild(el('td'));
+      problem.appendChild(document.createTextNode(group.message || ''));
+      problem.appendChild(el('span', 'why', group.reason || ''));
 
       var detailsRow = el('tr', 'details');
       detailsRow.hidden = true;
       var cell = el('td');
-      cell.colSpan = 4;
+      cell.colSpan = 5;
       cell.appendChild(el('pre', '', JSON.stringify({
-        ruleId: f.ruleId,
-        level: f.level,
-        file: f.file,
-        line: f.line,
-        column: f.column,
-        message: f.message,
-        properties: f.properties || null
+        triage: group.bucket,
+        reason: group.reason,
+        ruleId: group.ruleId,
+        level: group.level,
+        file: group.file,
+        lines: group.lines,
+        occurrences: group.count,
+        message: group.message
       }, null, 2)));
       detailsRow.appendChild(cell);
 
@@ -338,8 +359,8 @@ export const UI_HTML = `<!doctype html>
     event.preventDefault();
     var mode = modeSelect.value;
     var target = targetInput.value.trim();
-    if (mode === 'web' && !target) {
-      setStatus('Enter a URL to analyze.', true);
+    if ((mode === 'web' || mode === 'repo') && !target) {
+      setStatus(mode === 'web' ? 'Enter a URL to analyze.' : 'Enter a repository URL or owner/repo.', true);
       return;
     }
 
@@ -359,15 +380,13 @@ export const UI_HTML = `<!doctype html>
       .then(function (result) {
         if (!result.ok) throw new Error(result.body && result.body.error ? result.body.error : 'Scan failed');
         var data = result.body;
-        var ordered = data.findings.slice().sort(function (a, b) {
-          return (LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level]) || String(a.ruleId).localeCompare(String(b.ruleId));
-        });
+        var groups = data.triage ? data.triage.groups : [];
         renderSummary(data);
         renderNotices(data);
-        if (ordered.length === 0) {
+        if (groups.length === 0) {
           results.appendChild(el('div', 'empty', 'No findings at this target.'));
         } else {
-          renderTable(ordered);
+          renderGroups(groups);
         }
         setStatus('Scanned ' + data.target + ' in ' + data.elapsedMs + ' ms', false);
       })

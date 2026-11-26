@@ -9,11 +9,19 @@ import { scanDependencies } from '../modules/sca/sca-engine.js';
 import { scanIac } from '../modules/iac/iac-engine.js';
 import { scanSast } from '../modules/sast/sast-engine.js';
 import { runOrchestrator } from '../orchestrator/orchestrator.js';
+import { DEFAULT_CONFIG } from '../orchestrator/config.js';
+import {
+  triageFindings,
+  type TriageBucket,
+  type TriageResult,
+  type TriageSummary,
+} from '../triage/triage.js';
+import { cloneRepository, type CloneImpl } from './repo.js';
 import type { Finding } from '../report/sarif.js';
 import { NothingToScanError } from '../util/errors.js';
 import { UI_HTML } from './ui.js';
 
-export const SCAN_MODES = ['all', 'leakscan', 'sca', 'iac', 'sast', 'web'] as const;
+export const SCAN_MODES = ['all', 'leakscan', 'sca', 'iac', 'sast', 'web', 'repo'] as const;
 export type ScanMode = (typeof SCAN_MODES)[number];
 
 const DEFAULT_PORT = 4310;
@@ -26,6 +34,8 @@ export interface ServerOptions {
   port?: number;
   /** Base directory for relative targets and module resolution. */
   cwd?: string;
+  /** Injected cloner (tests); defaults to a real shallow `git clone`. */
+  clone?: CloneImpl;
 }
 
 export interface RunningServer {
@@ -42,6 +52,23 @@ export interface ScanRequest {
   config?: string;
 }
 
+export interface TriageGroupView {
+  key: string;
+  ruleId: string;
+  file: string;
+  message: string;
+  level: Finding['level'];
+  bucket: TriageBucket;
+  reason: string;
+  count: number;
+  lines: number[];
+}
+
+export interface TriageView {
+  summary: TriageSummary;
+  groups: TriageGroupView[];
+}
+
 export interface ScanResponse {
   mode: ScanMode;
   target: string;
@@ -49,6 +76,24 @@ export interface ScanResponse {
   skipped: { module: string; reason: string }[];
   failures: { module: string; message: string }[];
   elapsedMs: number;
+  triage: TriageView;
+}
+
+function serializeTriage(result: TriageResult): TriageView {
+  return {
+    summary: result.summary,
+    groups: result.groups.map((group) => ({
+      key: group.key,
+      ruleId: group.ruleId,
+      file: group.file,
+      message: group.message,
+      level: group.level,
+      bucket: group.bucket,
+      reason: group.reason,
+      count: group.count,
+      lines: group.lines,
+    })),
+  };
 }
 
 class HttpError extends Error {
@@ -158,7 +203,7 @@ function parseScanRequest(raw: string): ScanRequest {
   return { mode: mode as ScanMode | undefined, target, config };
 }
 
-async function runSingleModule(mode: Exclude<ScanMode, 'all' | 'web'>, target: string | undefined, cwd: string) {
+async function runSingleModule(mode: Exclude<ScanMode, 'all' | 'web' | 'repo'>, target: string | undefined, cwd: string) {
   switch (mode) {
     case 'leakscan':
       return toFindings(await scanRepo(target, { cwd }));
@@ -181,7 +226,45 @@ async function executeScan(request: ScanRequest, options: ServerOptions): Promis
     if (mode === 'web') {
       if (!target) throw new HttpError(400, 'target URL is required for mode "web"');
       const findings = await scanWeb(target);
-      return { mode, target, findings, skipped: [], failures: [], elapsedMs: Date.now() - started };
+      return {
+        mode,
+        target,
+        findings,
+        skipped: [],
+        failures: [],
+        elapsedMs: Date.now() - started,
+        triage: serializeTriage(triageFindings(findings)),
+      };
+    }
+
+    if (mode === 'repo') {
+      if (!target) throw new HttpError(400, 'Repository URL is required for mode "repo"');
+      const clone = options.clone ?? cloneRepository;
+      const handle = await clone(target);
+      try {
+        const result = await runOrchestrator(undefined, {
+          cwd: handle.dir,
+          // A cloned repository must not control the scan: ignore any
+          // config file it ships and use the default module set.
+          config: {
+            ...DEFAULT_CONFIG,
+            modules: [...DEFAULT_CONFIG.modules],
+            ignore: [...DEFAULT_CONFIG.ignore],
+          },
+          writeReport: false,
+        });
+        return {
+          mode,
+          target,
+          findings: result.findings,
+          skipped: result.skipped,
+          failures: result.failures,
+          elapsedMs: Date.now() - started,
+          triage: serializeTriage(result.triage),
+        };
+      } finally {
+        handle.cleanup();
+      }
     }
 
     if (mode === 'all') {
@@ -197,12 +280,21 @@ async function executeScan(request: ScanRequest, options: ServerOptions): Promis
         skipped: result.skipped,
         failures: result.failures,
         elapsedMs: Date.now() - started,
+        triage: serializeTriage(result.triage),
       };
     }
 
     try {
       const findings = await runSingleModule(mode, target || undefined, cwd);
-      return { mode, target: target || cwd, findings, skipped: [], failures: [], elapsedMs: Date.now() - started };
+      return {
+        mode,
+        target: target || cwd,
+        findings,
+        skipped: [],
+        failures: [],
+        elapsedMs: Date.now() - started,
+        triage: serializeTriage(triageFindings(findings)),
+      };
     } catch (error) {
       if (error instanceof NothingToScanError) {
         return {
@@ -212,6 +304,7 @@ async function executeScan(request: ScanRequest, options: ServerOptions): Promis
           skipped: [{ module: mode, reason: error.message }],
           failures: [],
           elapsedMs: Date.now() - started,
+          triage: serializeTriage(triageFindings([])),
         };
       }
       throw error;

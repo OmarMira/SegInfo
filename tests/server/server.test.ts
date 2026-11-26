@@ -229,6 +229,81 @@ describe('local server: scans', () => {
     }
   });
 
+  it('triages test-path findings as likely examples (without hiding them)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'seginfo-server-triage-'));
+    fs.mkdirSync(path.join(dir, 'tests'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'tests', 'app.js'), 'el.innerHTML = userInput;\n');
+    try {
+      const res = await postScan({ mode: 'sast', target: dir });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        findings: { properties?: { triage?: { bucket: string } } }[];
+        triage: { summary: { likelyExample: number; total: number }; groups: { bucket: string; reason: string }[] };
+      };
+      expect(body.triage.summary.total).toBe(1);
+      expect(body.triage.summary.likelyExample).toBe(1);
+      expect(body.triage.groups[0].bucket).toBe('likely-example');
+      expect(body.triage.groups[0].reason).toContain('tests');
+      expect(body.findings[0].properties?.triage?.bucket).toBe('likely-example');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('requires a repository URL for the repo mode', async () => {
+    const res = await postScan({ mode: 'repo', target: '' });
+    expect(res.status).toBe(400);
+  });
+
+  it('clones a repository, ignores its config, scans it and always cleans up', async () => {
+    const cloneRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'seginfo-clone-'));
+    const repoDir = path.join(cloneRoot, 'repo');
+    fs.mkdirSync(repoDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(repoDir, 'main.tf'),
+      'resource "aws_s3_bucket" "b" {\n  acl = "public-read"\n}\n',
+    );
+    // A cloned repository must not be able to disable modules via its config.
+    fs.writeFileSync(
+      path.join(repoDir, 'secure-scan.config.json'),
+      JSON.stringify({ modules: ['leakscan'] }),
+    );
+
+    let cleaned = false;
+    const repoServer = await startServer({
+      port: 0,
+      clone: async () => ({
+        dir: repoDir,
+        cleanup: () => {
+          cleaned = true;
+          fs.rmSync(cloneRoot, { recursive: true, force: true });
+        },
+      }),
+    });
+
+    try {
+      const res = await fetch(`${repoServer.url}/api/scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'repo', target: 'owner/repo' }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        mode: string;
+        findings: { ruleId: string }[];
+        triage: { summary: { total: number } };
+      };
+      expect(body.mode).toBe('repo');
+      expect(body.findings.some((f) => f.ruleId === 'iac/s3-public-acl')).toBe(true);
+      expect(body.triage.summary.total).toBeGreaterThan(0);
+      expect(cleaned).toBe(true);
+      expect(fs.existsSync(repoDir)).toBe(false);
+    } finally {
+      await repoServer.close();
+      fs.rmSync(cloneRoot, { recursive: true, force: true });
+    }
+  });
+
   it('scans a live URL with the web mode', async () => {
     const res = await postScan({ mode: 'web', target: `http://127.0.0.1:${headerPort}` });
     expect(res.status).toBe(200);
