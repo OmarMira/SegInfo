@@ -35,6 +35,11 @@ export interface OrchestratorOptions {
   configPath?: string;
   /** Injected module runners (tests); defaults to the real engines. */
   runners?: Partial<Record<ModuleId, ModuleRunner>>;
+  /**
+   * Write the merged SARIF file. The local server sets this to false so a
+   * browser scan never mutates the directory being scanned.
+   */
+  writeReport?: boolean;
 }
 
 export interface ModuleSkip {
@@ -129,7 +134,10 @@ export async function runOrchestrator(
   }));
   const findings = runs.flatMap((run) => run.findings);
 
-  const outputPath = writeMergedSarif(runs, path.resolve(absTarget, config.output));
+  const outputPath =
+    options.writeReport === false
+      ? ''
+      : writeMergedSarif(runs, path.resolve(absTarget, config.output));
 
   const threshold = LEVEL_RANK[config.failOn];
   const failsOnSeverity = findings.some((f) => LEVEL_RANK[f.level] >= threshold);

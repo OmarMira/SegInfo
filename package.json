@@ -16,7 +16,9 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.ts\"",
     "scan": "tsx src/cli.ts",
-    "scan:ci": "node dist/cli.js"
+    "scan:ci": "node dist/cli.js",
+    "serve": "tsx src/cli.ts serve",
+    "serve:ci": "node dist/cli.js serve"
   },
   "dependencies": {
     "commander": "^12.0.0",

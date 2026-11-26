@@ -10,6 +10,9 @@ Modular security scanner: **Secrets + SCA + IaC**, with SARIF 2.1.0 output for C
 | `leakscan` | Detects secrets/credentials in the working tree **and git history** |
 | `sca` | Flags vulnerable dependencies (npm `package-lock.json`, Python `requirements.txt`) against [OSV](https://osv.dev) |
 | `iac` | Terraform + Kubernetes misconfigurations (public S3, open security groups, privileged containers, plaintext secrets) |
+| `sast` | Source-level patterns: SQL injection, XSS sinks, command injection, `eval`, weak hashes, insecure randomness |
+| `web` | Live URL header/cookie audit (HSTS, CSP, X-Frame-Options, Referrer-Policy, cookie flags, version disclosure) |
+| `serve` | Local web UI + JSON API (see below) |
 
 ## Usage
 
@@ -27,6 +30,12 @@ npm run scan -- --files /path/to/repo
 npm run scan -- --mode leakscan --files "src/**"
 npm run scan -- --mode sca
 npm run scan -- --mode iac --files infra/
+npm run scan -- --mode sast --files "src/**"
+npm run scan -- --mode web --files https://example.com
+
+# Local web UI (browser) — loopback only
+npm run serve                       # http://127.0.0.1:4310, opens the browser
+npm run serve -- --port 8080 --no-open
 
 # Production build
 npm run build && node dist/cli.js
@@ -55,6 +64,46 @@ Place `secure-scan.config.json` in the scanned directory (or pass `--config <pat
 
 Modules with nothing to scan (no manifests, no IaC files) are reported as
 **skipped with a reason** — never as a clean pass and never as a failure.
+
+## Local web UI
+
+`secure-scan serve` starts a local-only server with a browser UI, so the scanner
+can be used without the CLI:
+
+```bash
+npm run serve                     # -> http://127.0.0.1:4310 (opens the browser)
+npm run serve -- --port 8080      # custom port
+npm run serve -- --no-open        # just print the URL
+npm run build && node dist/cli.js serve
+```
+
+Pick a mode, choose a folder with the **Browse...** button (or type a path, or a
+URL for `web`) and scan. The page shows findings with severity, rule, location
+and message; skipped modules and failed modules are listed honestly instead of
+being reported as a clean pass.
+
+Browser scans **never write files into the scanned directory** (no SARIF side
+effect) — only the CLI writes the report. Use the CLI for CI artifacts.
+
+### JSON API
+
+| Method | Path          | Body                                        |
+|--------|---------------|---------------------------------------------|
+| `GET`  | `/api/health` | —                                           |
+| `GET`  | `/api/browse?path=<dir>` | — (lists subdirectories for the folder picker) |
+| `POST` | `/api/scan`   | `{ "mode": "all", "target": "/path/to/repo", "config": "optional.json" }` |
+
+`POST /api/scan` answers with `{ mode, target, findings, skipped, failures, elapsedMs }`,
+where `findings` uses the shared `Finding` shape (`ruleId`, `message`, `file`,
+`line`, `column`, `level`, `properties`).
+
+### Safety defaults
+
+- Binds `127.0.0.1` unless `--host` is passed explicitly (with a warning).
+- Rejects requests whose `Host` is not loopback/localhost (DNS-rebinding guard)
+  and browser `Origin`s that differ from the request host.
+- Requires `Content-Type: application/json`, caps bodies at 64 KiB, sends no
+  CORS headers, and serves the UI under a strict CSP.
 
 ## GitHub Action
 
