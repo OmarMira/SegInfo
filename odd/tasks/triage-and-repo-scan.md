@@ -17,6 +17,8 @@
 
 **S6** — Reject non-https schemes, unsupported hosts, credentials in the URL, query strings/fragments and URLs without owner+repo, with a clear 400 message.
 
+**S7** — User (2026-11-26): "me gustaria que en el globo que explica cada linea tambien aparezca de manera clara cual puede o deberia ser la solucion del problema para que la persona que lo estudie lo pueda solucionar". The per-finding bubble must show a rule-specific remediation (`fix`), separate from the generic bucket advice, using the finding's own data when it makes the instruction actionable (fixed version + upgrade command for a dependency, the exact header value for a web finding, the secret-specific rotation/purge steps).
+
 ## Tasks
 
 | ID | Spec(s) | Route | Status | Commit |
@@ -24,6 +26,7 @@
 | T1 | S1-S4 | inline | done | c1eb146 |
 | T2 | S1, S5-S6 | inline | done | 8a1dd85 |
 | T3 | S1 | inline | done | (this commit) |
+| T4 | S7 | inline | done | (this commit) |
 
 ## Log
 
@@ -33,3 +36,4 @@
 **L4** — (2026-11-25) T3: README documents the triage buckets/grouping, the `repo` mode (clone, cleanup, ignored config) and the `triage` field of `POST /api/scan`. Checks before commit: `npm run lint` clean, `npx tsc --noEmit` clean, `npm test` 215/215, `npm run build` clean, UI inline script `node --check` OK. Risk: item 2 — the local server can clone and scan external repositories; mitigations are the https/host allowlist, argument-array git invocation, temp-dir cleanup and the ignored repo config.
 **L5** — (2026-11-25) User verbatim: "tiene textos y cajas de escritura encimados ademas que lo quiero en español al texto" (+ screenshot). Fix: each form field is now its own `.field` block with the label outside the control (3 columns on desktop, single column under 760 px), so labels can never overlap inputs; all UI copy, folder picker, statuses and the browse/repo validation errors are in Spanish, and triage reasons/summary too. Verified with headless Chrome screenshots at 1400 px and 760 px plus a real scan driven over CDP (results table + badges + modal render with no overlap). Finding descriptions from the modules stay in English because they are the same text as the SARIF/CI report.
 **L6** — (2026-11-25) User verbatim: "necesito que agregues un boton talvez despues de Escanear, uqe sea \"Limpiar\" para que limpie todo lo que se hizo y deje todo limpio como recien arrancado ... ademas que despues de cada escaneo si sobrevuelo una linea de lo que encontro que me diga en un texto claro en una burbuja porque fue seleccionado porque en todos dice lo mismo". Fix: `Limpiar` resets the form, results and status, aborts an in-flight scan and ignores its late response; hovering or focusing a row shows a tooltip with `why` (rule-specific, Spanish), `evidence` (module properties) and `nextStep`, so rows sharing a bucket no longer show identical text. New `src/triage/explain.ts` builds the explanation; `why`/`evidence`/`nextStep` travel in the API group view and the inline repeated reason was removed from the table. Verified with CDP screenshots: tooltip per row (IAC bucket ACL, privileged container, SAST sink, secret pattern + entropy), Limpiar after a scan and mid-scan (0 rows, empty status), and the 760 px layout with both buttons.
+**L7** — (2026-11-26) User verbatim: "me gustaria que en el globo que explica cada linea tambien aparezca de manera clara cual puede o deberia ser la solucion del problema para que la persona que lo estudie lo pueda solucionar". Fix: `FindingExplanation.fix` added in `src/triage/explain.ts` with `SECRET_FIXES` (rotate + relocate + purge history per secret type), `RULE_FIXES` (SAST/IaC/web remediation) and `dependencyFix` (fixed version + `npm install`/`pip install` command + KEV urgency, or an explicit "no fixed version published"). `fix` travels through `TriagedFinding`, `TriageGroup` and the API `TriageGroupView`, and the tooltip renders it in a green "Cómo solucionarlo" block before the triage category. Verified: 231/231 tests, tsc/lint/build clean, and a real scan on :4402 showing `Actualizá lodash a 4.17.21 o superior (npm install lodash@4.17.21)`, the S3 public-access-block fix and the credential rotation fix. Risk: none — additive UI/API field; no existing consumer changes.

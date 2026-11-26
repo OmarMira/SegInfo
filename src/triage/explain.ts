@@ -3,11 +3,17 @@ import type { Finding } from '../report/sarif.js';
 /**
  * Per-finding explanation for the UI tooltip: why this specific line was
  * reported (rule-specific, in Spanish) plus the concrete evidence the module
- * captured in `properties` (secret type, entropy, CVE, container, header...).
+ * captured in `properties` (secret type, entropy, CVE, container, header...)
+ * and how to fix it.
  *
  * The triage bucket answer ("why is it in this bucket") stays in triage.ts;
  * this module only explains the detection itself, so two rows that share a
  * bucket still get different, verifiable reasons.
+ *
+ * `fix` is the technical remediation for the rule, not the bucket advice: it
+ * tells the reader what to change, and uses the finding's own data when that
+ * makes the instruction actionable (the fixed version for a vulnerable
+ * dependency, the exact header value for a web finding).
  */
 
 export interface FindingExplanation {
@@ -15,6 +21,8 @@ export interface FindingExplanation {
   why: string;
   /** Labeled facts captured by the module, ready to display. */
   evidence: string[];
+  /** Concrete remediation for this rule (Spanish, imperative). */
+  fix: string;
 }
 
 /** What each secret shape means for the reader (leakscan). */
@@ -33,6 +41,34 @@ const SECRET_PATTERN_NOTES: Record<string, string> = {
   'db-url-credentials': 'URL de conexión con usuario y contraseña embebidos.',
   'hardcoded-credential':
     'Una variable con nombre de credencial (password, secret, token, api key) recibe un literal de 16+ caracteres.',
+};
+
+/** How to fix each secret shape: rotate, relocate, purge history (leakscan). */
+const SECRET_FIXES: Record<string, string> = {
+  'aws-access-key':
+    'Desactivá la clave en IAM (Usuario → Credenciales de seguridad → Desactivar o Eliminar), generá una nueva solo si la necesitás y guardala en un gestor de secretos. El valor ya estuvo expuesto: purgalo del historial de git con git filter-repo o BFG.',
+  'aws-sts-access-key':
+    'Revocá la sesión temporal y sacá el token del repo. Las credenciales STS se piden en tiempo de ejecución (rol / assume-role), nunca se escriben en archivos.',
+  'github-token':
+    'Revocá el token en GitHub → Settings → Developer settings → Personal access tokens, generá uno nuevo con permisos mínimos y cargalo desde un secret store o una variable de entorno.',
+  'github-fine-grained-pat':
+    'Revocá el token fine-grained en GitHub → Settings → Developer settings → Fine-grained tokens, generá uno nuevo acotado a los repositorios necesarios y guardalo fuera del código.',
+  'slack-token':
+    'Revocá el token en la app de Slack (OAuth & Permissions → Revoke) y reinstalá la app; el token nuevo va en una variable de entorno, no en el repo.',
+  'stripe-key':
+    'Rollé la clave en el dashboard de Stripe (Developers → API keys → Roll key) y cargá la nueva por variable de entorno. Si era una clave live, revisá los movimientos por uso no autorizado.',
+  'google-api-key':
+    'Borrá o restringí la clave en Google Cloud Console (APIs & Services → Credentials): limitá las APIs habilitadas y los orígenes o IPs permitidos, y sacala del código.',
+  'npm-token':
+    'Revocá el token con npm token revoke <id> y publicá desde CI con tokens de corta duración u OIDC (--provenance), en lugar de un token fijo en el repo.',
+  'jwt-token':
+    'Rotá la clave de firma para invalidar los JWT ya emitidos y generá los tokens en el servidor; un JWT en el repo permite suplantar sesiones mientras no expire.',
+  'private-key':
+    'Tratá la clave como comprometida: generá un par nuevo, reemplazá la clave pública en los servidores (authorized_keys o certificado) y revocá la anterior.',
+  'db-url-credentials':
+    'Cambiá la contraseña de ese usuario en la base, mové la cadena de conexión a una variable de entorno o gestor de secretos y no dejes credenciales en la URL versionada.',
+  'hardcoded-credential':
+    'Sacá el literal del código: leelo de process.env (o del gestor de secretos del despliegue), rotá el valor por si ya se filtró y agregá el archivo a .gitignore si no debe versionarse.',
 };
 
 /** SAST rules: the sink/pattern that matched. */
@@ -82,6 +118,66 @@ const RULE_NOTES: Record<string, string> = {
   'web/redirect-loop-or-exceeded':
     'La cadena de redirecciones supera el límite permitido (posible bucle).',
   'web/fetch-failed': 'No se pudo obtener la URL para analizarla.',
+};
+
+/** How to fix each non-secret rule (SAST sinks, IaC misconfig, web headers). */
+const RULE_FIXES: Record<string, string> = {
+  'sast/sql-injection':
+    'Usá consultas parametrizadas (marcadores ? / $1 o el query builder del ORM) en lugar de concatenar o interpolar entrada del usuario en el SQL.',
+  'sast/xss-innerhtml':
+    'Escribí con textContent o innerText; si necesitás HTML, sanitizá primero con una librería como DOMPurify antes de asignar innerHTML.',
+  'sast/command-injection':
+    'Pasá los argumentos como array a execFile o spawn sin shell: true, validá contra una allowlist y no armes la orden por concatenación.',
+  'sast/eval-usage':
+    'Eliminá eval y new Function: usá JSON.parse para datos, un mapa de funciones permitidas para el despacho o un parser real.',
+  'sast/weak-hash':
+    'Cambiá a SHA-256 o SHA-512 para integridad; para contraseñas usá bcrypt, scrypt o argon2 con salt y factor de trabajo.',
+  'sast/insecure-random':
+    'Usá crypto.randomBytes o crypto.getRandomValues para tokens, contraseñas y saltos; Math.random no es criptográfico.',
+
+  'iac/s3-public-acl':
+    'Cambiá acl a private y agregá un aws_s3_bucket_public_access_block con block_public_acls, block_public_policy, ignore_public_acls y restrict_public_buckets en true.',
+  'iac/sg-sensitive-port-open':
+    'No expongas ese puerto a Internet: limitá cidr_blocks a los rangos reales (VPN u oficina) o usá bastión / SSM Session Manager en lugar de SSH o RDP públicos.',
+  'iac/sg-open-to-world':
+    'Reemplazá 0.0.0.0/0 por los CIDR que realmente necesitan acceso y poné el servicio detrás de un balanceador con WAF si debe ser público.',
+  'iac/tf-hardcoded-secret':
+    'Reemplazá el literal por var.<nombre> (con sensitive = true) o leelo de SSM / Secrets Manager, y rotá el valor porque ya quedó en el state y en el repo.',
+  'iac/k8s-privileged-container':
+    'Quitá securityContext.privileged: true; si necesitás capacidades, declaralas en capabilities.add y poné allowPrivilegeEscalation: false y runAsNonRoot: true.',
+  'iac/k8s-host-network':
+    'Quitá hostNetwork: true y exponé el pod con un Service o Ingress; si de verdad necesita la red del host, justificalo y acotalo con una NetworkPolicy.',
+  'iac/k8s-plaintext-env-secret':
+    'Cargá el valor desde un Secret con valueFrom.secretKeyRef (o External Secrets / CSI), no como value literal en el manifiesto.',
+
+  'web/http-not-redirected':
+    'Serví el sitio solo por HTTPS y redirigí HTTP con 301 o 308 a la misma URL en https://; después agregá HSTS.',
+  'web/missing-hsts':
+    'Agregá la cabecera Strict-Transport-Security: max-age=31536000; includeSubDomains en el servidor o el proxy (solo cuando HTTPS funcione en todos los subdominios).',
+  'web/missing-csp':
+    "Definí una Content-Security-Policy restrictiva (por ejemplo default-src 'self') y evitá unsafe-inline; empezá en report-only si hay que medir el impacto.",
+  'web/missing-x-content-type-options':
+    'Agregá la cabecera X-Content-Type-Options: nosniff en todas las respuestas.',
+  'web/missing-x-frame-options':
+    "Agregá X-Frame-Options: DENY (o frame-ancestors 'none' en la CSP) para bloquear el encuadre del sitio.",
+  'web/missing-referrer-policy':
+    'Agregá Referrer-Policy: strict-origin-when-cross-origin (o no-referrer si no necesitás el referente).',
+  'web/insecure-cookie':
+    'Marcá las cookies de sesión con Secure y HttpOnly (y SameSite), y serví siempre por HTTPS para que Secure tenga efecto.',
+  'web/missing-samesite':
+    'Agregá SameSite=Lax (o Strict) a las cookies que no necesiten enviarse en navegaciones cruzadas.',
+  'web/server-version-disclosure':
+    'Ocultá la versión: server_tokens off en nginx, ServerTokens Prod en Apache, o eliminá la cabecera en el proxy o CDN.',
+  'web/redirect-loop-or-exceeded':
+    'Revisá las reglas de redirección: cortá el ciclo, apuntá a la URL final y limitá la cadena a uno o dos saltos.',
+  'web/fetch-failed':
+    'Verificá que la URL resuelva por DNS, presente un certificado válido y no esté detrás de un firewall o autenticación que bloquee el escaneo.',
+};
+
+/** Upgrade command per ecosystem, used to make the dependency fix concrete. */
+const ECOSYSTEM_UPGRADE: Record<string, (pkg: string, version: string) => string> = {
+  npm: (pkg, version) => `npm install ${pkg}@${version}`,
+  PyPI: (pkg, version) => `pip install -U "${pkg}>=${version}"`,
 };
 
 const PROPERTY_LABELS: Record<string, string> = {
@@ -284,19 +380,86 @@ function fallbackWhy(ruleId: string): string {
   return 'El hallazgo coincide con la comprobación indicada por la regla.';
 }
 
+/** How to fix a leaked secret: rotate it, relocate it, purge the history. */
+function secretFix(properties: Record<string, unknown> | undefined, ruleId: string): string {
+  const type =
+    typeof properties?.type === 'string' ? properties.type : ruleId.replace(/^leakscan\//, '');
+  const base =
+    SECRET_FIXES[type] ??
+    'Rotá el secreto, movelo a una variable de entorno o a un gestor de secretos y sacalo del código y del historial de git.';
+  if (properties?.source !== 'git-history') return base;
+  if (/historial|filter-repo|BFG/i.test(base)) return base;
+  return `${base} Además, el valor quedó en un commit: purgalo del historial con git filter-repo o BFG.`;
+}
+
+/** First fixed version, accepting both the array and the plain-string shape. */
+function firstFixedVersion(properties: Record<string, unknown> | undefined): string | null {
+  const fixed = properties?.fixedIn;
+  if (typeof fixed === 'string' && fixed.trim() !== '') return fixed.trim();
+  if (Array.isArray(fixed)) {
+    const first = fixed.find((item) => typeof item === 'string' && item.trim() !== '');
+    return typeof first === 'string' ? first.trim() : null;
+  }
+  return null;
+}
+
+/** How to fix a vulnerable dependency, with the upgrade command when known. */
+function dependencyFix(properties: Record<string, unknown> | undefined): string {
+  const pkg = typeof properties?.package === 'string' ? properties.package : null;
+  const ecosystem = typeof properties?.ecosystem === 'string' ? properties.ecosystem : null;
+  const fixed = firstFixedVersion(properties);
+  const urgency =
+    properties?.kev === true
+      ? ' Está catalogada como explotada en el mundo real (CISA KEV): priorizala sobre el resto.'
+      : '';
+
+  if (!pkg) {
+    return `Actualizá la dependencia a una versión corregida o reemplazala por una alternativa mantenida.${urgency}`;
+  }
+  if (!fixed) {
+    return `No hay versión corregida publicada para ${pkg}: aplicá el mitigante que indique el aviso o reemplazá la dependencia.${urgency}`;
+  }
+  const command = ecosystem ? ECOSYSTEM_UPGRADE[ecosystem]?.(pkg, fixed) : undefined;
+  const hint = command ? ` (${command})` : '';
+  return `Actualizá ${pkg} a ${fixed} o superior${hint}. Si todavía no podés, aplicá el workaround del aviso y registrá la excepción con su fecha de revisión.${urgency}`;
+}
+
+function fallbackFix(ruleId: string): string {
+  if (ruleId.startsWith('leakscan/')) {
+    return 'Rotá el secreto, movelo a una variable de entorno o a un gestor de secretos y sacalo del código y del historial de git.';
+  }
+  if (ruleId.startsWith('sca/')) {
+    return 'Actualizá la dependencia a una versión corregida o reemplazala por una alternativa mantenida.';
+  }
+  if (ruleId.startsWith('iac/')) {
+    return 'Corregí la configuración según la recomendación del proveedor y volvé a aplicar el plan revisando el diff.';
+  }
+  if (ruleId.startsWith('sast/')) {
+    return 'Validá o parametrizá el dato en el punto señalado y agregá un test que cubra el caso.';
+  }
+  if (ruleId.startsWith('web/')) {
+    return 'Agregá o corregí la cabecera indicada en el servidor o en el proxy que responde.';
+  }
+  return 'Aplicá la corrección que indica la documentación de la regla y volvé a escanear para confirmar.';
+}
+
 /** Builds the Spanish "why was this reported" explanation and its evidence. */
 export function explainFinding(finding: Finding): FindingExplanation {
   const properties = finding.properties;
   const evidence = evidenceFor(properties);
 
   let why: string;
+  let fix: string;
   if (finding.ruleId.startsWith('leakscan/')) {
     why = secretWhy(properties, finding.ruleId);
+    fix = secretFix(properties, finding.ruleId);
   } else if (finding.ruleId.startsWith('sca/')) {
     why = dependencyWhy(properties);
+    fix = dependencyFix(properties);
   } else {
     why = RULE_NOTES[finding.ruleId] ?? fallbackWhy(finding.ruleId);
+    fix = RULE_FIXES[finding.ruleId] ?? fallbackFix(finding.ruleId);
   }
 
-  return { why, evidence };
+  return { why, evidence, fix };
 }

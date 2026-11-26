@@ -113,3 +113,81 @@ describe('finding explanations', () => {
     expect(result.evidence).toEqual([]);
   });
 });
+
+describe('finding fixes', () => {
+  it('tells which version to upgrade to, with the npm command and the KEV urgency', () => {
+    const result = explainFinding(
+      finding({
+        ruleId: 'sca/CVE-2020-8203',
+        properties: {
+          package: 'lodash',
+          version: '4.17.15',
+          ecosystem: 'npm',
+          vulnerabilityId: 'CVE-2020-8203',
+          fixedIn: ['4.17.19'],
+          kev: true,
+        },
+      }),
+    );
+    expect(result.fix).toContain('Actualizá lodash a 4.17.19');
+    expect(result.fix).toContain('npm install lodash@4.17.19');
+    expect(result.fix).toContain('CISA KEV');
+  });
+
+  it('uses the pip command for a PyPI dependency', () => {
+    const result = explainFinding(
+      finding({
+        ruleId: 'sca/CVE-2023-32681',
+        properties: { package: 'requests', ecosystem: 'PyPI', fixedIn: ['2.31.0'] },
+      }),
+    );
+    expect(result.fix).toContain('pip install -U "requests>=2.31.0"');
+  });
+
+  it('says there is no fixed version instead of inventing one', () => {
+    const result = explainFinding(
+      finding({ ruleId: 'sca/CVE-2024-0001', properties: { package: 'left-pad' } }),
+    );
+    expect(result.fix).toContain('No hay versión corregida publicada para left-pad');
+  });
+
+  it('tells how to rotate a leaked AWS key and purge it from git history', () => {
+    const result = explainFinding(
+      finding({
+        ruleId: 'leakscan/aws-access-key',
+        properties: { type: 'aws-access-key', source: 'git-history' },
+      }),
+    );
+    expect(result.fix).toContain('IAM');
+    expect(result.fix).toContain('filter-repo');
+  });
+
+  it('tells how to close a public S3 ACL', () => {
+    const result = explainFinding(
+      finding({ ruleId: 'iac/s3-public-acl', properties: { acl: 'public-read' } }),
+    );
+    expect(result.fix).toContain('aws_s3_bucket_public_access_block');
+    expect(result.fix).toContain('acl a private');
+  });
+
+  it('tells how to drop privileged from a container', () => {
+    const result = explainFinding(
+      finding({ ruleId: 'iac/k8s-privileged-container', properties: { container: 'app' } }),
+    );
+    expect(result.fix).toContain('privileged: true');
+    expect(result.fix).toContain('allowPrivilegeEscalation: false');
+  });
+
+  it('tells how to fix an HTML sink and a missing security header', () => {
+    const sink = explainFinding(finding({ properties: { sink: 'innerHTML' } }));
+    expect(sink.fix).toContain('textContent');
+
+    const header = explainFinding(finding({ ruleId: 'web/missing-hsts', properties: {} }));
+    expect(header.fix).toContain('Strict-Transport-Security: max-age=31536000');
+  });
+
+  it('falls back to family advice for an unknown rule', () => {
+    const result = explainFinding(finding({ ruleId: 'sast/unknown-rule' }));
+    expect(result.fix).toContain('parametrizá');
+  });
+});

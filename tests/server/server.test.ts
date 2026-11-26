@@ -240,7 +240,7 @@ describe('local server: scans', () => {
         findings: { properties?: { triage?: { bucket: string } } }[];
         triage: {
           summary: { likelyExample: number; total: number };
-          groups: { bucket: string; reason: string; why: string; nextStep: string }[];
+          groups: { bucket: string; reason: string; why: string; fix: string; nextStep: string }[];
         };
       };
       expect(body.triage.summary.total).toBe(1);
@@ -248,6 +248,7 @@ describe('local server: scans', () => {
       expect(body.triage.groups[0].bucket).toBe('likely-example');
       expect(body.triage.groups[0].reason).toContain('tests');
       expect(body.triage.groups[0].why).toContain('sink HTML');
+      expect(body.triage.groups[0].fix).toContain('textContent');
       expect(body.triage.groups[0].nextStep).toContain('tests');
       expect(body.findings[0].properties?.triage?.bucket).toBe('likely-example');
     } finally {

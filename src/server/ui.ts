@@ -154,6 +154,13 @@ export const UI_HTML = `<!doctype html>
   .tip ul { margin: 3px 0 0; padding-left: 16px; color: var(--muted); }
   .tip li { margin: 2px 0; }
   .tip .tip-next { margin-top: 6px; color: var(--warning); }
+  .tip .tip-fix {
+    padding: 8px 10px;
+    border-left: 3px solid var(--ok);
+    background: rgba(53, 208, 127, 0.09);
+    border-radius: 0 8px 8px 0;
+    color: var(--text);
+  }
   .tip .tip-foot { margin-top: 8px; color: var(--muted); font-size: 12px; }
 </style>
 </head>
@@ -448,6 +455,11 @@ export const UI_HTML = `<!doctype html>
         list.appendChild(el('li', '', line));
       });
       tip.appendChild(list);
+    }
+
+    if (group.fix) {
+      tip.appendChild(el('div', 'tip-title', 'Cómo solucionarlo'));
+      tip.appendChild(el('p', 'tip-fix', group.fix));
     }
 
     tip.appendChild(el('div', 'tip-title', 'Categoría de triaje'));

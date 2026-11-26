@@ -84,11 +84,15 @@ groups with severity, rule, location and message; skipped modules and failed
 modules are listed honestly instead of being reported as a clean pass.
 
 Hover a row (or focus it with `Tab`) to see why **that specific finding** was
-reported: the rule's explanation in Spanish plus the evidence the module
-captured (secret pattern and entropy, CVE/package/fixed version, container or
-header name, and so on), separate from the triage bucket reason. **Limpiar**
-resets the form, the results and the status for a fresh scan (it also cancels
-an in-flight scan).
+reported and how to fix it: the rule's explanation in Spanish, the evidence the
+module captured (secret pattern and entropy, CVE/package/fixed version,
+container or header name) and a rule-specific remediation, separate from the
+generic triage bucket advice. For vulnerable dependencies the fix names the
+version to upgrade to and the package-manager command
+(`npm install lodash@4.17.21`, `pip install -U "requests>=2.31.0"`); for leaked
+secrets it lists the rotation step for that provider. **Limpiar** resets the
+form, the results and the status for a fresh scan (it also cancels an in-flight
+scan).
 
 Mode `repo` shallow-clones a public Git repository into a temp folder, scans it
 with the default modules and always deletes the clone afterwards. Only `https`

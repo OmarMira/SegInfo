@@ -24,6 +24,8 @@ export interface TriagedFinding {
   why: string;
   /** Concrete evidence captured by the module (Spanish, labeled). */
   evidence: string[];
+  /** Technical remediation for this rule (Spanish, specific). */
+  fix: string;
   /** What the reader should do with this bucket. */
   nextStep: string;
 }
@@ -38,6 +40,7 @@ export interface TriageGroup {
   reason: string;
   why: string;
   evidence: string[];
+  fix: string;
   nextStep: string;
   count: number;
   lines: number[];
@@ -171,9 +174,9 @@ function compareGroups(a: TriageGroup, b: TriageGroup): number {
 export function triageFindings(findings: Finding[]): TriageResult {
   const triaged: TriagedFinding[] = findings.map((finding) => {
     const { bucket, reason } = classifyFinding(finding);
-    const { why, evidence } = explainFinding(finding);
+    const { why, evidence, fix } = explainFinding(finding);
     finding.properties = { ...finding.properties, triage: { bucket, reason } };
-    return { finding, bucket, reason, why, evidence, nextStep: BUCKET_ADVICE[bucket] };
+    return { finding, bucket, reason, why, evidence, fix, nextStep: BUCKET_ADVICE[bucket] };
   });
 
   const groups = new Map<string, TriageGroup>();
@@ -198,6 +201,7 @@ export function triageFindings(findings: Finding[]): TriageResult {
       reason,
       why: entry.why,
       evidence: entry.evidence,
+      fix: entry.fix,
       nextStep: entry.nextStep,
       count: 1,
       lines: [finding.line],

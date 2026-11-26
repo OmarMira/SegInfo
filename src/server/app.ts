@@ -62,6 +62,7 @@ export interface TriageGroupView {
   reason: string;
   why: string;
   evidence: string[];
+  fix: string;
   nextStep: string;
   count: number;
   lines: number[];
@@ -95,6 +96,7 @@ function serializeTriage(result: TriageResult): TriageView {
       reason: group.reason,
       why: group.why,
       evidence: group.evidence,
+      fix: group.fix,
       nextStep: group.nextStep,
       count: group.count,
       lines: group.lines,

@@ -97,13 +97,15 @@ describe('triage grouping', () => {
     });
   });
 
-  it('gives every group a rule-specific why and a next step', () => {
+  it('gives every group a rule-specific why, a fix and a next step', () => {
     const findings = [finding({ properties: { sink: 'innerHTML', language: 'js' } })];
     const result = triageFindings(findings);
     expect(result.groups[0].why).toContain('sink HTML');
     expect(result.groups[0].evidence).toContain('Sink: innerHTML');
+    expect(result.groups[0].fix).toContain('textContent');
     expect(result.groups[0].nextStep).toContain('Revisa');
     expect(result.findings[0].why).toBe(result.groups[0].why);
+    expect(result.findings[0].fix).toBe(result.groups[0].fix);
   });
 
   it('formats a one-line summary', () => {
