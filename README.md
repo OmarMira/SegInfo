@@ -12,6 +12,7 @@ Modular security scanner: **Secrets + SCA + IaC**, with SARIF 2.1.0 output for C
 | `iac` | Terraform + Kubernetes misconfigurations (public S3, open security groups, privileged containers, plaintext secrets) |
 | `sast` | Source-level patterns: SQL injection, XSS sinks, command injection, `eval`, weak hashes, insecure randomness |
 | `web` | Live URL header/cookie audit (HSTS, CSP, X-Frame-Options, Referrer-Policy, cookie flags, version disclosure) |
+| `repo` | (local UI/API) Shallow-clones a public Git repository and runs the default modules |
 | `serve` | Local web UI + JSON API (see below) |
 
 ## Usage
@@ -77,13 +78,34 @@ npm run serve -- --no-open        # just print the URL
 npm run build && node dist/cli.js serve
 ```
 
-Pick a mode, choose a folder with the **Browse...** button (or type a path, or a
-URL for `web`) and scan. The page shows findings with severity, rule, location
-and message; skipped modules and failed modules are listed honestly instead of
-being reported as a clean pass.
+Pick a mode, choose a folder with the **Browse...** button (or type a path, a
+URL for `web`, or `owner/repo` for `repo`) and scan. The page shows triaged
+groups with severity, rule, location and message; skipped modules and failed
+modules are listed honestly instead of being reported as a clean pass.
+
+Mode `repo` shallow-clones a public Git repository into a temp folder, scans it
+with the default modules and always deletes the clone afterwards. Only `https`
+URLs on GitHub/GitLab/Bitbucket are accepted (no ssh, no credentials). A cloned
+repository cannot weaken its own scan: any `secure-scan.config.json` it ships is
+ignored.
 
 Browser scans **never write files into the scanned directory** (no SARIF side
 effect) — only the CLI writes the report. Use the CLI for CI artifacts.
+
+### Triage
+
+Every finding is classified into exactly one bucket and nothing is hidden:
+
+| Bucket | Meaning |
+|--------|---------|
+| `confirmed` | Objective external evidence: the CVE is in **CISA KEV** (known exploited). |
+| `review` | Needs a human decision, with a rule-family reason (e.g. SAST matches are never data-flow confirmed, secrets may be dead, IaC may not be deployed). |
+| `likely-example` | The path looks like tests, fixtures, docs, demos or vendored code. |
+
+Identical findings (same rule, file and message) collapse into one row with a
+count and all line numbers, so duplicates no longer drown the real problems.
+The bucket is also written to `properties.triage = { bucket, reason }` in every
+finding (SARIF and API), so any consumer can explain the classification.
 
 ### JSON API
 
@@ -93,9 +115,17 @@ effect) — only the CLI writes the report. Use the CLI for CI artifacts.
 | `GET`  | `/api/browse?path=<dir>` | — (lists subdirectories for the folder picker) |
 | `POST` | `/api/scan`   | `{ "mode": "all", "target": "/path/to/repo", "config": "optional.json" }` |
 
-`POST /api/scan` answers with `{ mode, target, findings, skipped, failures, elapsedMs }`,
-where `findings` uses the shared `Finding` shape (`ruleId`, `message`, `file`,
-`line`, `column`, `level`, `properties`).
+To scan a repository, use `mode: "repo"` with `target` set to `owner/repo` or a
+full `https://github.com/owner/repo` URL:
+
+```json
+{ "mode": "repo", "target": "octocat/Hello-World" }
+```
+
+`POST /api/scan` answers with `{ mode, target, findings, skipped, failures,
+elapsedMs, triage }`, where `findings` uses the shared `Finding` shape (`ruleId`,
+`message`, `file`, `line`, `column`, `level`, `properties`) and `triage` is
+`{ summary: { total, confirmed, review, likelyExample }, groups: [...] }`.
 
 ### Safety defaults
 
