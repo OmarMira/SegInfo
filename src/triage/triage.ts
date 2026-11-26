@@ -96,21 +96,21 @@ function looksLikeExample(file: string): boolean {
 
 function reviewReason(ruleId: string): string {
   if (ruleId.startsWith('leakscan/')) {
-    return 'Secret pattern matched; confirm whether the credential is live';
+    return 'Coincide con un patrón de secreto; confirma si la credencial sigue activa';
   }
   if (ruleId.startsWith('sca/')) {
-    return 'Dependency advisory; confirm the package is used and reachable';
+    return 'Aviso de dependencia; confirma si el paquete se usa y es alcanzable';
   }
   if (ruleId.startsWith('iac/')) {
-    return 'Configuration risk; confirm whether it applies to the deployed environment';
+    return 'Riesgo de configuración; confirma si aplica al entorno desplegado';
   }
   if (ruleId.startsWith('sast/')) {
-    return 'Source pattern match; requires manual review (no data-flow confirmation)';
+    return 'Coincidencia de patrón en el código; requiere revisión manual (sin confirmación de flujo de datos)';
   }
   if (ruleId.startsWith('web/')) {
-    return 'Live header finding; verify against the production configuration';
+    return 'Hallazgo en cabeceras en vivo; verifícalo contra la configuración de producción';
   }
-  return 'Requires manual review';
+  return 'Requiere revisión manual';
 }
 
 interface Classification {
@@ -122,13 +122,13 @@ export function classifyFinding(finding: Finding): Classification {
   if (finding.properties?.kev === true) {
     return {
       bucket: 'confirmed',
-      reason: 'Known-exploited vulnerability (CISA KEV)',
+      reason: 'Vulnerabilidad de explotación conocida (CISA KEV)',
     };
   }
   if (looksLikeExample(finding.file)) {
     return {
       bucket: 'likely-example',
-      reason: 'Path looks like tests, fixtures, examples or vendored code',
+      reason: 'La ruta parece de tests, fixtures, ejemplos o código de terceros',
     };
   }
   return { bucket: 'review', reason: reviewReason(finding.ruleId) };
@@ -193,10 +193,10 @@ export function triageFindings(findings: Finding[]): TriageResult {
   return { summary, groups: ordered, findings: triaged };
 }
 
-/** One-line human summary, e.g. "3 confirmed, 12 need review, 629 likely examples". */
+/** One-line human summary, e.g. "3 confirmados, 12 por revisar, 629 probables ejemplos". */
 export function formatTriageSummary(summary: TriageSummary): string {
   return (
-    `${summary.confirmed} confirmed, ${summary.review} need review, ` +
-    `${summary.likelyExample} likely example/duplicate`
+    `${summary.confirmed} confirmados, ${summary.review} por revisar, ` +
+    `${summary.likelyExample} probables ejemplos o duplicados`
   );
 }

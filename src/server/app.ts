@@ -224,7 +224,7 @@ async function executeScan(request: ScanRequest, options: ServerOptions): Promis
 
   try {
     if (mode === 'web') {
-      if (!target) throw new HttpError(400, 'target URL is required for mode "web"');
+      if (!target) throw new HttpError(400, 'La URL de destino es obligatoria para el modo "web"');
       const findings = await scanWeb(target);
       return {
         mode,
@@ -238,7 +238,7 @@ async function executeScan(request: ScanRequest, options: ServerOptions): Promis
     }
 
     if (mode === 'repo') {
-      if (!target) throw new HttpError(400, 'Repository URL is required for mode "repo"');
+      if (!target) throw new HttpError(400, 'La URL del repositorio es obligatoria para el modo "repo"');
       const clone = options.clone ?? cloneRepository;
       const handle = await clone(target);
       try {
@@ -348,22 +348,22 @@ export function browseDirectory(requested?: string | null): BrowseResult {
   if (!requested || requested.trim() === '') {
     return { path: null, parent: null, entries: listRoots() };
   }
-  if (requested.length > 4096) throw new HttpError(400, 'path is too long');
+  if (requested.length > 4096) throw new HttpError(400, 'La ruta es demasiado larga');
   const resolved = path.resolve(requested);
 
   let stat: fs.Stats;
   try {
     stat = fs.statSync(resolved);
   } catch {
-    throw new HttpError(404, `Directory not found: ${resolved}`);
+    throw new HttpError(404, `No se encontró la carpeta: ${resolved}`);
   }
-  if (!stat.isDirectory()) throw new HttpError(400, `Not a directory: ${resolved}`);
+  if (!stat.isDirectory()) throw new HttpError(400, `No es una carpeta: ${resolved}`);
 
   let dirents: fs.Dirent[];
   try {
     dirents = fs.readdirSync(resolved, { withFileTypes: true });
   } catch {
-    throw new HttpError(403, `Cannot read directory: ${resolved}`);
+    throw new HttpError(403, `No se puede leer la carpeta: ${resolved}`);
   }
 
   const entries = dirents

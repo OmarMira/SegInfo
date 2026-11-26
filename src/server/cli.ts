@@ -45,18 +45,18 @@ export async function runServeCli(options: ServeCliOptions = {}): Promise<Runnin
   const host = options.host ?? '127.0.0.1';
   const running = await startServer({ host, port });
 
-  console.log(`🔐 secure-scan local UI: ${running.url}`);
+  console.log(`🔐 UI local de secure-scan: ${running.url}`);
   if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
     console.warn(
-      `⚠️  Bound to ${host}: scans are reachable from other machines on this network. ` +
-        'Only do this on a trusted network.',
+      `⚠️  Escuchando en ${host}: los escaneos son accesibles desde otras máquinas de la red. ` +
+        'Hazlo solo en una red de confianza.',
     );
   }
 
   if (options.open !== false) openBrowser(running.url);
 
   const shutdown = (): void => {
-    console.log('\nStopping server...');
+    console.log('\nDeteniendo el servidor...');
     void running.close().finally(() => process.exit(0));
   };
   process.once('SIGINT', shutdown);

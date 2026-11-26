@@ -33,31 +33,31 @@ export type CloneImpl = (url: string) => Promise<CloneHandle>;
 /** Validates and canonicalizes a repository URL (or `owner/repo` shorthand). */
 export function normalizeRepoUrl(input: string): string {
   const raw = input.trim();
-  if (!raw) throw new Error('Repository URL is required');
+  if (!raw) throw new Error('La URL del repositorio es obligatoria');
 
   const candidate = OWNER_REPO_RE.test(raw) ? `https://github.com/${raw}` : raw;
   let parsed: URL;
   try {
     parsed = new URL(candidate);
   } catch {
-    throw new Error(`Invalid repository URL: ${input}`);
+    throw new Error(`URL de repositorio no válida: ${input}`);
   }
 
   if (parsed.protocol !== 'https:') {
-    throw new Error('Only https:// repository URLs are supported');
+    throw new Error('Solo se admiten URLs https:// de repositorios');
   }
   if (!ALLOWED_HOSTS.has(parsed.hostname.toLowerCase())) {
-    throw new Error(`Unsupported repository host: ${parsed.hostname}`);
+    throw new Error(`Host de repositorio no soportado: ${parsed.hostname}`);
   }
   if (parsed.username || parsed.password) {
-    throw new Error('Credentials in repository URLs are not supported');
+    throw new Error('No se admiten credenciales en la URL del repositorio');
   }
   if (parsed.search || parsed.hash) {
-    throw new Error('Query strings and fragments are not supported in repository URLs');
+    throw new Error('No se admiten parámetros ni fragmentos en la URL del repositorio');
   }
   const segments = parsed.pathname.split('/').filter(Boolean);
   if (segments.length < 2) {
-    throw new Error('Repository URL must include an owner and a repository name');
+    throw new Error('La URL debe incluir un propietario y un nombre de repositorio');
   }
 
   return `https://${parsed.hostname.toLowerCase()}/${segments.join('/')}`;
@@ -76,10 +76,10 @@ function runGit(args: string[], timeoutMs: number): Promise<void> {
 
 function cloneError(error: unknown, url: string, timeoutMs: number): Error {
   const err = error as NodeJS.ErrnoException & { killed?: boolean; stderr?: string; stdout?: string };
-  if (err.code === 'ENOENT') return new Error('git is not installed or not in PATH');
-  if (err.killed) return new Error(`git clone timed out after ${Math.round(timeoutMs / 1000)}s`);
+  if (err.code === 'ENOENT') return new Error('git no está instalado o no está en el PATH');
+  if (err.killed) return new Error(`git clone agotó el tiempo de espera tras ${Math.round(timeoutMs / 1000)} s`);
   const detail = (err.stderr ?? err.stdout ?? err.message ?? '').trim().split('\n').slice(-1)[0];
-  return new Error(`git clone failed for ${url}${detail ? `: ${detail}` : ''}`);
+  return new Error(`git clone falló para ${url}${detail ? `: ${detail}` : ''}`);
 }
 
 /**

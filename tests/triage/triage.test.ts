@@ -36,11 +36,11 @@ describe('triage classification', () => {
   it('keeps a production source finding in review with a rule-specific reason', () => {
     const result = classifyFinding(finding());
     expect(result.bucket).toBe('review');
-    expect(result.reason).toContain('data-flow');
+    expect(result.reason).toContain('flujo de datos');
   });
 
   it('and a secret finding asks whether the credential is live', () => {
-    expect(classifyFinding(finding({ ruleId: 'leakscan/aws-access-key' })).reason).toContain('live');
+    expect(classifyFinding(finding({ ruleId: 'leakscan/aws-access-key' })).reason).toContain('activa');
   });
 });
 
@@ -93,13 +93,13 @@ describe('triage grouping', () => {
     triageFindings(findings);
     expect(findings[0].properties?.triage).toEqual({
       bucket: 'review',
-      reason: expect.stringContaining('data-flow'),
+      reason: expect.stringContaining('flujo de datos'),
     });
   });
 
   it('formats a one-line summary', () => {
     expect(formatTriageSummary({ total: 6, confirmed: 1, review: 2, likelyExample: 3 })).toBe(
-      '1 confirmed, 2 need review, 3 likely example/duplicate',
+      '1 confirmados, 2 por revisar, 3 probables ejemplos o duplicados',
     );
   });
 });

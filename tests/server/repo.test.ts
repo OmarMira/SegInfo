@@ -17,20 +17,20 @@ describe('repository URL validation', () => {
   it('rejects non-https, ssh and local schemes', () => {
     expect(() => normalizeRepoUrl('http://github.com/owner/repo')).toThrow(/https/);
     expect(() => normalizeRepoUrl('ssh://git@github.com/owner/repo')).toThrow(/https/);
-    expect(() => normalizeRepoUrl('git@github.com:owner/repo.git')).toThrow(/Invalid/);
+    expect(() => normalizeRepoUrl('git@github.com:owner/repo.git')).toThrow(/no válida/);
     expect(() => normalizeRepoUrl('file:///C:/repos/app')).toThrow(/https/);
   });
 
   it('rejects unsupported hosts', () => {
-    expect(() => normalizeRepoUrl('https://evil.example/owner/repo')).toThrow(/Unsupported repository host/);
+    expect(() => normalizeRepoUrl('https://evil.example/owner/repo')).toThrow(/no soportado/);
   });
 
   it('rejects credentials and query strings', () => {
-    expect(() => normalizeRepoUrl('https://user:pass@github.com/owner/repo')).toThrow(/Credentials/);
-    expect(() => normalizeRepoUrl('https://github.com/owner/repo?token=abc')).toThrow(/Query strings/);
+    expect(() => normalizeRepoUrl('https://user:pass@github.com/owner/repo')).toThrow(/credenciales/);
+    expect(() => normalizeRepoUrl('https://github.com/owner/repo?token=abc')).toThrow(/parámetros/);
   });
 
   it('rejects URLs without an owner and repository', () => {
-    expect(() => normalizeRepoUrl('https://github.com/owner')).toThrow(/owner and a repository/);
+    expect(() => normalizeRepoUrl('https://github.com/owner')).toThrow(/propietario y un nombre/);
   });
 });
