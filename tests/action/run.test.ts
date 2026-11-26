@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { runAction, type ActionEnvironment } from '../../src/action/run.js';
 import type { OrchestratorResult } from '../../src/orchestrator/orchestrator.js';
+import { triageFindings } from '../../src/triage/triage.js';
 
 function fakeResult(overrides: Partial<OrchestratorResult> = {}): OrchestratorResult {
   return {
@@ -10,6 +11,7 @@ function fakeResult(overrides: Partial<OrchestratorResult> = {}): OrchestratorRe
     skipped: [],
     failures: [],
     outputPath: '/tmp/seginfo.sarif',
+    triage: triageFindings([]),
     ...overrides,
   };
 }

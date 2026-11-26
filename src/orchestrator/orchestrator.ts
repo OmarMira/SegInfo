@@ -7,6 +7,7 @@ import { scanDependencies } from '../modules/sca/sca-engine.js';
 import { scanIac } from '../modules/iac/iac-engine.js';
 import { NothingToScanError } from '../util/errors.js';
 import { writeMergedSarif, type Finding } from '../report/sarif.js';
+import { triageFindings, type TriageResult } from '../triage/triage.js';
 import { loadConfig, type ModuleId, type ScanConfig } from './config.js';
 
 export type ModuleRunner = (
@@ -60,6 +61,8 @@ export interface OrchestratorResult {
   skipped: ModuleSkip[];
   failures: ModuleFailure[];
   outputPath: string;
+  /** Deduplicated, bucketed view of `findings` (findings are annotated too). */
+  triage: TriageResult;
 }
 
 function isDirectory(p: string): boolean {
@@ -133,6 +136,7 @@ export async function runOrchestrator(
     findings: entry.findings.filter(notIgnored),
   }));
   const findings = runs.flatMap((run) => run.findings);
+  const triage = triageFindings(findings);
 
   const outputPath =
     options.writeReport === false
@@ -143,5 +147,5 @@ export async function runOrchestrator(
   const failsOnSeverity = findings.some((f) => LEVEL_RANK[f.level] >= threshold);
   const exitCode: 0 | 1 = failures.length > 0 || failsOnSeverity ? 1 : 0;
 
-  return { exitCode, totalFindings: findings.length, findings, skipped, failures, outputPath };
+  return { exitCode, totalFindings: findings.length, findings, skipped, failures, outputPath, triage };
 }

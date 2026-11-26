@@ -6,24 +6,27 @@ import {
   upsertPrComment,
 } from '../../src/action/pr-comment.js';
 import type { OrchestratorResult } from '../../src/orchestrator/orchestrator.js';
+import { triageFindings } from '../../src/triage/triage.js';
 
 function makeResult(overrides: Partial<OrchestratorResult> = {}): OrchestratorResult {
+  const findings: OrchestratorResult['findings'] = [
+    {
+      ruleId: 'leakscan/aws-access-key',
+      message: 'Potential secret (aws-access-key) found in working-tree',
+      file: 'src/config.ts',
+      line: 2,
+      column: 1,
+      level: 'warning',
+    },
+  ];
   return {
     exitCode: 1,
     totalFindings: 1,
-    findings: [
-      {
-        ruleId: 'leakscan/aws-access-key',
-        message: 'Potential secret (aws-access-key) found in working-tree',
-        file: 'src/config.ts',
-        line: 2,
-        column: 1,
-        level: 'warning',
-      },
-    ],
+    findings,
     skipped: [{ module: 'iac', reason: 'No Terraform or Kubernetes files found under /x' }],
     failures: [],
     outputPath: '/tmp/out.sarif',
+    triage: triageFindings(findings),
     ...overrides,
   };
 }
