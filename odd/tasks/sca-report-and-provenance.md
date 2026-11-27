@@ -19,7 +19,7 @@
 
 | ID | Spec(s) | Route | Status | Commit |
 |----|---------|-------|--------|--------|
-| T1 | S2 | inline | done | `54bf4c0` |
+| T1 | S2 | inline | done | `2e067f0` |
 | T2 | S1, S5 | inline | pending | — |
 | T3 | S3, S4 | inline | pending | — |
 | T4 | S1-S5 | inline | pending | — |
