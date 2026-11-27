@@ -20,9 +20,9 @@
 | ID | Spec(s) | Route | Status | Commit |
 |----|---------|-------|--------|--------|
 | T1 | S2 | inline | done | `2e067f0` |
-| T2 | S1, S5 | inline | pending | — |
-| T3 | S3, S4 | inline | pending | — |
-| T4 | S1-S5 | inline | pending | — |
+| T2 | S1, S5 | inline | done | `02739ea` |
+| T3 | S3, S4 | inline | done | `02739ea` |
+| T4 | S1-S5 | inline | done | `02739ea` |
 
 ## Log
 
@@ -48,3 +48,10 @@ Also: "puedes subir el codigo a este repo publico. https://github.com/OmarMira/S
 - ERROR 06: `scanRepoDetailed` reports observed `HistoryCoverage` (gitRepository, shallow, commitsScanned, truncated, error). Not yet surfaced in the report — that belongs to T3.
 Evidence: `npx tsc --noEmit` clean; `npm run lint` clean; `npm test` 244/244 in 21 files; synthetic 1001-package lockfile parsed in 10 ms with 200 real chains reported as `pathsTotal=200`, `pathsTruncated=true`.
 Still pending: T2 (grouped SCA view), T3 (vocabulary + provenance), T4 (verification fixture + before/after comparison).
+
+**L5** — (2026-11-26) T2–T4 implemented in `02739ea` (no detection, severity or secret-classification change):
+- T2 — `src/triage/sca-packages.ts` groups findings by `ecosystem:name@version`. Each package keeps every advisory (id, aliases, severity, level, bucket, message, `fixedIn`, KEV, advisory timestamps, locations and occurrence count). `summary` separates `packages`, distinct `advisories` and `occurrences`, and counts `unclassified` SCA findings instead of dropping them. `fixTarget` is the smallest stable fixed version above the installed one, same major preferred; a transitive package's `fix` names the introducing parents and never suggests a direct install. The API adds an optional `sca` view; `triage.groups` and the flat `findings` stay untouched.
+- T3 — `src/server/provenance.ts` records `origin` (`repository-clone` / `local-path` / `remote-url`), `source`, `ref`, `commit`, `dirty`, `scannedAt`, `scope.workingTree`, `scope.gitHistory` with the observed `HistoryCoverage`, `scope.manifests` and `vulnerabilityData` (`OSV` + latest advisory `modified`). `repo.ts` captures the clone's ref/commit before cleanup; the orchestrator now returns observed coverage (history + SCA manifests) and the single `leakscan` mode uses `scanRepoDetailed`. Vocabulary: `working-tree` renders as "contenido actual del checkout (sin historial)", and a temporary clone is labelled `repository-clone`, never a local working tree.
+- T4 — fixture `tests/sca/fixtures/report/` plus `tests/sca/sca-report.test.ts` (two advisories on a direct package, one transitive package introduced by two parents, one dev-only package, one non-SCA secret added at test time), `tests/server/provenance.test.ts` and server provenance assertions.
+- Evidence: `npx tsc --noEmit` clean; `npm run lint` clean; `npm test` 258/258 in 23 files; `npm run build` OK; UI inline script passes `node --check`.
+- Before/after on the fixture: before, the flat triage view showed 4 rows (one per advisory) and no directness. After, the package view shows 3 packages / 4 distinct advisories / 4 occurrences with nothing lost; `alpha@2.0.0` (direct, 2 advisories) fixes to `2.0.1`; `compartido@1.0.0` is transitive via `alpha@2.0.0, beta@1.0.0` with two paths, and its fix says "no la instales directamente" (no `npm install compartido`); `gamma@1.0.0` is dev-only.
