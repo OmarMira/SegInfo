@@ -1,0 +1,13 @@
+{
+  "name": "sca-report-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Verification fixture for the grouped SCA report (see tests/sca/sca-report.test.ts)",
+  "dependencies": {
+    "alpha": "^2.0.0",
+    "beta": "^1.0.0"
+  },
+  "devDependencies": {
+    "gamma": "^1.0.0"
+  }
+}

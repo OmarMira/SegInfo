@@ -3,12 +3,15 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { scanWeb } from '../modules/web/web-engine.js';
-import { scanRepo } from '../modules/leakscan/leak-scan-engine.js';
+import {
+  scanRepoDetailed,
+  type HistoryCoverage,
+} from '../modules/leakscan/leak-scan-engine.js';
 import { toFindings } from '../modules/leakscan/normalize.js';
-import { scanDependencies } from '../modules/sca/sca-engine.js';
+import { findManifests, scanDependencies } from '../modules/sca/sca-engine.js';
 import { scanIac } from '../modules/iac/iac-engine.js';
 import { scanSast } from '../modules/sast/sast-engine.js';
-import { runOrchestrator } from '../orchestrator/orchestrator.js';
+import { runOrchestrator, type ObservedCoverage } from '../orchestrator/orchestrator.js';
 import { DEFAULT_CONFIG } from '../orchestrator/config.js';
 import {
   triageFindings,
@@ -16,7 +19,9 @@ import {
   type TriageResult,
   type TriageSummary,
 } from '../triage/triage.js';
+import { buildScaView, type ScaView } from '../triage/sca-packages.js';
 import { cloneRepository, type CloneImpl } from './repo.js';
+import { buildProvenance, readGitState, type Provenance } from './provenance.js';
 import type { Finding } from '../report/sarif.js';
 import { NothingToScanError } from '../util/errors.js';
 import { UI_HTML } from './ui.js';
@@ -81,6 +86,13 @@ export interface ScanResponse {
   failures: { module: string; message: string }[];
   elapsedMs: number;
   triage: TriageView;
+  /**
+   * Package-grouped SCA view. Present only when the SCA module ran; the flat
+   * `findings` list stays untouched for existing consumers.
+   */
+  sca?: ScaView;
+  /** Where the scanned code came from and what was actually covered. */
+  provenance: Provenance;
 }
 
 function serializeTriage(result: TriageResult): TriageView {
@@ -211,17 +223,86 @@ function parseScanRequest(raw: string): ScanRequest {
   return { mode: mode as ScanMode | undefined, target, config };
 }
 
-async function runSingleModule(mode: Exclude<ScanMode, 'all' | 'web' | 'repo'>, target: string | undefined, cwd: string) {
+interface SingleModuleResult {
+  findings: Finding[];
+  history: HistoryCoverage | null;
+  manifests: string[];
+}
+
+function relativeTo(cwd: string, abs: string): string {
+  return path.relative(cwd, abs).split(path.sep).join('/') || path.basename(abs);
+}
+
+async function runSingleModule(
+  mode: Exclude<ScanMode, 'all' | 'web' | 'repo'>,
+  target: string | undefined,
+  cwd: string,
+): Promise<SingleModuleResult> {
   switch (mode) {
-    case 'leakscan':
-      return toFindings(await scanRepo(target, { cwd }));
-    case 'sca':
-      return scanDependencies(target, { cwd });
+    case 'leakscan': {
+      const result = await scanRepoDetailed(target, { cwd });
+      return {
+        findings: toFindings(result.findings),
+        history: result.coverage.history,
+        manifests: [],
+      };
+    }
+    case 'sca': {
+      const manifests = findManifests(target, cwd).map((manifest) => relativeTo(cwd, manifest));
+      return { findings: await scanDependencies(target, { cwd }), history: null, manifests };
+    }
     case 'iac':
-      return scanIac(target, { cwd });
+      return { findings: await scanIac(target, { cwd }), history: null, manifests: [] };
     case 'sast':
-      return scanSast(target, { cwd });
+      return { findings: await scanSast(target, { cwd }), history: null, manifests: [] };
   }
+}
+
+/** Directory that anchors git provenance (a file target uses its folder). */
+function scanRootOf(cwd: string, target: string | undefined): string {
+  const abs = target ? path.resolve(cwd, target) : cwd;
+  try {
+    return fs.statSync(abs).isDirectory() ? abs : path.dirname(abs);
+  } catch {
+    return cwd; // glob or missing target: the engines anchor to cwd
+  }
+}
+
+function moduleRan(
+  skipped: { module: string }[],
+  failures: { module: string }[],
+  id: string,
+): boolean {
+  return (
+    !skipped.some((entry) => entry.module === id) &&
+    !failures.some((entry) => entry.module === id)
+  );
+}
+
+interface ResponseInput {
+  mode: ScanMode;
+  target: string;
+  findings: Finding[];
+  skipped: { module: string; reason: string }[];
+  failures: { module: string; message: string }[];
+  startedAt: number;
+  triage: TriageView;
+  provenance: Provenance;
+  scaRan: boolean;
+}
+
+function buildResponse(input: ResponseInput): ScanResponse {
+  return {
+    mode: input.mode,
+    target: input.target,
+    findings: input.findings,
+    skipped: input.skipped,
+    failures: input.failures,
+    elapsedMs: Date.now() - input.startedAt,
+    triage: input.triage,
+    ...(input.scaRan ? { sca: buildScaView(input.findings) } : {}),
+    provenance: input.provenance,
+  };
 }
 
 async function executeScan(request: ScanRequest, options: ServerOptions): Promise<ScanResponse> {
@@ -229,20 +310,53 @@ async function executeScan(request: ScanRequest, options: ServerOptions): Promis
   const mode = request.mode ?? 'all';
   const target = request.target?.trim() ?? '';
   const started = Date.now();
+  const scannedAt = new Date(started).toISOString();
+
+  const localProvenance = async (input: {
+    findings: Finding[];
+    coverage?: ObservedCoverage;
+    history?: HistoryCoverage | null;
+    manifests?: string[];
+    scaRan: boolean;
+  }): Promise<Provenance> => {
+    const root = scanRootOf(cwd, target);
+    return buildProvenance({
+      origin: 'local-path',
+      source: target ? path.resolve(cwd, target) : cwd,
+      git: await readGitState(root),
+      scannedAt,
+      workingTree: true,
+      history: input.history ?? input.coverage?.history ?? null,
+      manifests: input.manifests ?? input.coverage?.manifests ?? [],
+      findings: input.findings,
+      scaRan: input.scaRan,
+    });
+  };
 
   try {
     if (mode === 'web') {
       if (!target) throw new HttpError(400, 'La URL de destino es obligatoria para el modo "web"');
       const findings = await scanWeb(target);
-      return {
+      return buildResponse({
         mode,
         target,
         findings,
         skipped: [],
         failures: [],
-        elapsedMs: Date.now() - started,
+        startedAt: started,
         triage: serializeTriage(triageFindings(findings)),
-      };
+        scaRan: false,
+        provenance: buildProvenance({
+          origin: 'remote-url',
+          source: target,
+          scannedAt,
+          workingTree: false,
+          history: null,
+          manifests: [],
+          findings,
+          scaRan: false,
+        }),
+      });
     }
 
     if (mode === 'repo') {
@@ -261,15 +375,28 @@ async function executeScan(request: ScanRequest, options: ServerOptions): Promis
           },
           writeReport: false,
         });
-        return {
+        const scaRan = moduleRan(result.skipped, result.failures, 'sca');
+        return buildResponse({
           mode,
           target,
           findings: result.findings,
           skipped: result.skipped,
           failures: result.failures,
-          elapsedMs: Date.now() - started,
+          startedAt: started,
           triage: serializeTriage(result.triage),
-        };
+          scaRan,
+          provenance: buildProvenance({
+            origin: 'repository-clone',
+            source: handle.url ?? target,
+            git: handle.git ?? (await readGitState(handle.dir)),
+            scannedAt,
+            workingTree: true,
+            history: result.coverage?.history ?? null,
+            manifests: result.coverage?.manifests ?? [],
+            findings: result.findings,
+            scaRan,
+          }),
+        });
       } finally {
         handle.cleanup();
       }
@@ -281,39 +408,56 @@ async function executeScan(request: ScanRequest, options: ServerOptions): Promis
         configPath: request.config,
         writeReport: false,
       });
-      return {
+      const scaRan = moduleRan(result.skipped, result.failures, 'sca');
+      return buildResponse({
         mode,
         target: target || cwd,
         findings: result.findings,
         skipped: result.skipped,
         failures: result.failures,
-        elapsedMs: Date.now() - started,
+        startedAt: started,
         triage: serializeTriage(result.triage),
-      };
+        scaRan,
+        provenance: await localProvenance({
+          findings: result.findings,
+          coverage: result.coverage,
+          scaRan,
+        }),
+      });
     }
 
     try {
-      const findings = await runSingleModule(mode, target || undefined, cwd);
-      return {
+      const result = await runSingleModule(mode, target || undefined, cwd);
+      const scaRan = mode === 'sca';
+      return buildResponse({
         mode,
         target: target || cwd,
-        findings,
+        findings: result.findings,
         skipped: [],
         failures: [],
-        elapsedMs: Date.now() - started,
-        triage: serializeTriage(triageFindings(findings)),
-      };
+        startedAt: started,
+        triage: serializeTriage(triageFindings(result.findings)),
+        scaRan,
+        provenance: await localProvenance({
+          findings: result.findings,
+          history: result.history,
+          manifests: result.manifests,
+          scaRan,
+        }),
+      });
     } catch (error) {
       if (error instanceof NothingToScanError) {
-        return {
+        return buildResponse({
           mode,
           target: target || cwd,
           findings: [],
           skipped: [{ module: mode, reason: error.message }],
           failures: [],
-          elapsedMs: Date.now() - started,
+          startedAt: started,
           triage: serializeTriage(triageFindings([])),
-        };
+          scaRan: false,
+          provenance: await localProvenance({ findings: [], scaRan: false }),
+        });
       }
       throw error;
     }

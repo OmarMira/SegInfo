@@ -79,26 +79,32 @@ npm run build && node dist/cli.js serve
 ```
 
 Pick a mode, choose a folder with the **Browse...** button (or type a path, a
-URL for `web`, or `owner/repo` for `repo`) and scan. The page shows triaged
-groups with severity, rule, location and message; skipped modules and failed
-modules are listed honestly instead of being reported as a clean pass.
+URL for `web`, or `owner/repo` for `repo`) and scan. The page shows a
+**provenance block** (where the code came from, ref/commit, when it was
+scanned and what was actually covered), a **package table** for vulnerable
+dependencies, and the triaged groups with severity, rule, location and message.
+Skipped modules and failed modules are listed honestly instead of being
+reported as a clean pass.
 
 Hover a row (or focus it with `Tab`) to see why **that specific finding** was
 reported and how to fix it: the rule's explanation in Spanish, the evidence the
 module captured (secret pattern and entropy, CVE/package/fixed version,
 container or header name) and a rule-specific remediation, separate from the
-generic triage bucket advice. For vulnerable dependencies the fix names the
+generic triage bucket advice. For a **direct** dependency the fix names the
 version to upgrade to and the package-manager command
-(`npm install lodash@4.17.21`, `pip install -U "requests>=2.31.0"`); for leaked
-secrets it lists the rotation step for that provider. **Limpiar** resets the
-form, the results and the status for a fresh scan (it also cancels an in-flight
-scan).
+(`npm install lodash@4.17.21`, `pip install -U "requests>=2.31.0"`); for a
+**transitive** one it names the package(s) that introduce it and never suggests
+installing it directly. For leaked secrets it lists the rotation step for that
+provider. **Limpiar** resets the form, the results and the status for a fresh
+scan (it also cancels an in-flight scan).
 
 Mode `repo` shallow-clones a public Git repository into a temp folder, scans it
 with the default modules and always deletes the clone afterwards. Only `https`
 URLs on GitHub/GitLab/Bitbucket are accepted (no ssh, no credentials). A cloned
 repository cannot weaken its own scan: any `secure-scan.config.json` it ships is
-ignored.
+ignored. The report labels that copy as a **cloned repository** (not a local
+working tree), records its branch and commit, and flags the shallow history as
+incomplete.
 
 Browser scans **never write files into the scanned directory** (no SARIF side
 effect) — only the CLI writes the report. Use the CLI for CI artifacts.
@@ -138,6 +144,44 @@ direct dependency while a nested `a@1.0.0` is transitive. Python
 `requirements.txt` pins keep `direct`/`dev` as `null`, because the file alone
 cannot prove them.
 
+### Grouped SCA report
+
+The API adds a package-grouped `sca` view next to the untouched flat
+`findings`/`triage` data, and the UI renders it as one row per resolved package
+(`name@version`) instead of one row per advisory. Grouping never reduces the
+total: `sca.summary` reports **packages**, **distinct advisories** and
+**occurrences** separately, and every advisory keeps its id, aliases, severity,
+level, `fixedIn`, KEV flag, advisory timestamps and manifest locations.
+
+Each package also carries `direct`/`dev` (only `true` when every resolved
+instance agrees), `introducedBy`, the introduction paths and a `fixTarget`: the
+smallest published fixed version above the installed one, preferring the same
+major and a stable release. The remediation text for a transitive package tells
+the reader to update the package that introduces it — it never recommends a
+direct install and never promises that updating the parent will change the
+resolved version.
+
+### Provenance
+
+Every `POST /api/scan` response includes `provenance`, so a report can state
+where the scanned code came from without inventing metadata:
+
+| Field | Meaning |
+|-------|---------|
+| `origin` | `repository-clone`, `local-path` or `remote-url` |
+| `source` | Repository URL, local absolute path or live URL |
+| `ref` / `commit` / `dirty` | Checked-out branch, full HEAD sha and uncommitted changes; `null` when unknown or not a repository |
+| `scannedAt` | ISO timestamp of the scan start |
+| `scope.workingTree` | Whether the current file tree was walked |
+| `scope.gitHistory` / `scope.history` | Whether a history pass ran, plus the observed `HistoryCoverage` (`commitsScanned`, `shallow`, `truncated`, `error`) |
+| `scope.manifests` | Manifests the SCA module actually read |
+| `vulnerabilityData` | `{ source: 'OSV', latestAdvisoryUpdate }`, or `null` when SCA did not run |
+
+`latestAdvisoryUpdate` is the newest advisory `modified` timestamp seen in the
+scan; OSV does not publish a feed-wide update date, so none is invented. A
+temporary clone is always reported as `repository-clone`, never as a local
+working tree, and a shallow clone is flagged as incomplete history.
+
 ### JSON API
 
 | Method | Path          | Body                                        |
@@ -154,9 +198,11 @@ full `https://github.com/owner/repo` URL:
 ```
 
 `POST /api/scan` answers with `{ mode, target, findings, skipped, failures,
-elapsedMs, triage }`, where `findings` uses the shared `Finding` shape (`ruleId`,
-`message`, `file`, `line`, `column`, `level`, `properties`) and `triage` is
-`{ summary: { total, confirmed, review, likelyExample }, groups: [...] }`.
+elapsedMs, triage, sca?, provenance }`, where `findings` uses the shared
+`Finding` shape (`ruleId`, `message`, `file`, `line`, `column`, `level`,
+`properties`), `triage` is `{ summary: { total, confirmed, review, likelyExample },
+groups: [...] }`, `sca` is present only when the SCA module ran, and
+`provenance` is always present (see **Provenance** above).
 
 ### Safety defaults
 

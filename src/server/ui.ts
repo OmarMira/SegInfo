@@ -131,6 +131,15 @@ export const UI_HTML = `<!doctype html>
   .empty { padding: 28px 8px; text-align: center; color: var(--muted); }
   .results-hint { margin: 0 0 10px; color: var(--muted); font-size: 13px; }
   .results-hint[hidden] { display: none; }
+  .prov { margin: 0 0 16px; }
+  .prov h2 { margin: 0 0 10px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  .prov dl { margin: 0; display: grid; grid-template-columns: minmax(150px, max-content) 1fr; gap: 6px 14px; font-size: 13px; }
+  .prov dt { color: var(--muted); }
+  .prov dd { margin: 0; word-break: break-word; }
+  .section-title { margin: 22px 0 6px; font-size: 16px; }
+  .pkg-name { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; }
+  .pkg-meta { color: var(--muted); font-size: 12px; display: block; margin-top: 3px; }
+  .sca-fix { color: var(--text); font-size: 12.5px; }
   .tip {
     position: fixed;
     z-index: 20;
@@ -398,6 +407,11 @@ export const UI_HTML = `<!doctype html>
           ['Tiempo', data.elapsedMs + ' ms']
         ]
       : [['Hallazgos', data.findings.length], ['Tiempo', data.elapsedMs + ' ms']];
+    if (data.sca) {
+      chips.push(['Paquetes SCA', data.sca.summary.packages]);
+      chips.push(['Avisos SCA', data.sca.summary.advisories]);
+      chips.push(['Ocurrencias SCA', data.sca.summary.occurrences]);
+    }
     chips.forEach(function (pair) {
       var chip = el('span', 'chip', pair[0]);
       chip.appendChild(el('b', '', pair[1]));
@@ -413,6 +427,181 @@ export const UI_HTML = `<!doctype html>
     data.failures.forEach(function (f) {
       results.appendChild(el('div', 'notice', f.module + ' falló: ' + f.message));
     });
+  }
+
+  function renderProvenance(prov) {
+    if (!prov) return;
+    var box = el('section', 'card prov');
+    box.appendChild(el('h2', '', 'Procedencia del escaneo'));
+    var dl = el('dl');
+    function row(label, value) {
+      if (value === null || value === undefined || value === '') return;
+      dl.appendChild(el('dt', '', label));
+      dl.appendChild(el('dd', '', value));
+    }
+    var origins = {
+      'repository-clone': 'Repositorio clonado en una copia temporal (se borra al terminar)',
+      'local-path': 'Ruta local escaneada en este equipo',
+      'remote-url': 'URL en vivo'
+    };
+    row('Origen', origins[prov.origin] || prov.origin);
+    row('Fuente', prov.source);
+    if (prov.requestedRef) row('Ref solicitada', prov.requestedRef);
+    row('Rama / ref', prov.ref);
+    row('Commit', prov.commit ? prov.commit.slice(0, 12) : null);
+    if (prov.dirty === true) row('Estado del checkout', 'Con cambios sin commitear');
+    else if (prov.dirty === false) row('Estado del checkout', 'Sin cambios sin commitear');
+    row('Escaneado', prov.scannedAt);
+    var scope = prov.scope || {};
+    row('Contenido actual', scope.workingTree ? 'Recorrido completo de archivos' : 'No se recorrió');
+    var hist = scope.history;
+    if (!hist) {
+      row('Historial de git', scope.gitHistory ? 'Analizado' : 'No analizado');
+    } else if (!hist.attempted) {
+      row('Historial de git', 'No solicitado');
+    } else if (!hist.gitRepository) {
+      row('Historial de git', 'No aplica: el objetivo no es un repositorio git');
+    } else {
+      var text = hist.commitsScanned + ' commit(s) inspeccionado(s)';
+      if (hist.shallow === true) text += ' · clon superficial: historial incompleto';
+      if (hist.truncated) text += ' · se alcanzó el límite de commits';
+      if (hist.error) text += ' · error: ' + hist.error;
+      row('Historial de git', text);
+    }
+    if (scope.manifests && scope.manifests.length > 0) {
+      row('Manifiestos SCA', scope.manifests.join(', '));
+    }
+    var vd = prov.vulnerabilityData;
+    if (vd) {
+      var vdText = vd.source;
+      vdText += vd.latestAdvisoryUpdate
+        ? ' · aviso modificado más reciente: ' + vd.latestAdvisoryUpdate
+        : ' · los avisos consultados no publican fecha de modificación';
+      row('Datos de vulnerabilidades', vdText);
+    }
+    box.appendChild(dl);
+    results.appendChild(box);
+  }
+
+  function scaTipGroup(pkg) {
+    var first = pkg.locations && pkg.locations.length ? pkg.locations[0] : { file: '', line: 1 };
+    return {
+      bucket: pkg.bucket,
+      ruleId: pkg.key,
+      why: pkg.why,
+      message: '',
+      evidence: [
+        'Paquete: ' + pkg.name + '@' + pkg.version + ' (' + pkg.ecosystem + ')',
+        'Avisos: ' + pkg.advisories.map(function (a) { return a.vulnerabilityId; }).join(', '),
+        'Introducida por: ' + (pkg.introducedBy.length ? pkg.introducedBy.join(', ') : '—'),
+        'Rutas: ' + (pkg.paths.length ? pkg.paths.join(' | ') : '—'),
+        'Ubicaciones: ' + pkg.locations.map(function (l) { return l.file + ':' + l.line; }).join(', ')
+      ],
+      fix: pkg.fix,
+      reason: pkg.direct === false ? 'Dependencia transitiva' : pkg.direct === true ? 'Dependencia directa' : 'Directness desconocida',
+      nextStep: pkg.direct === false
+        ? 'Actualizá el paquete que la introduce; no la instales directamente.'
+        : 'Revisá si el paquete se usa y es alcanzable en producción.',
+      file: first.file,
+      lines: [first.line],
+      count: pkg.occurrenceCount
+    };
+  }
+
+  function renderSca(sca) {
+    if (!sca) return;
+    results.appendChild(el('h2', 'section-title', 'Dependencias vulnerables (agrupadas por paquete)'));
+    var s = sca.summary;
+    var line = s.packages + ' paquete(s) · ' + s.advisories + ' aviso(s) distinto(s) · ' +
+      s.occurrences + ' ocurrencia(s) · ' + s.directPackages + ' directo(s), ' +
+      s.transitivePackages + ' transitivo(s)';
+    if (s.devPackages > 0) line += ', ' + s.devPackages + ' solo de desarrollo';
+    if (s.unknownDirectness > 0) line += ', ' + s.unknownDirectness + ' sin determinar';
+    results.appendChild(el('p', 'results-hint', line));
+
+    if (s.unclassified > 0) {
+      results.appendChild(el('div', 'notice', s.unclassified + ' hallazgo(s) SCA sin datos de paquete: permanecen en la tabla general.'));
+    }
+    if (sca.packages.length === 0) {
+      results.appendChild(el('div', 'notice', 'El módulo SCA se ejecutó y no encontró dependencias vulnerables en los manifiestos.'));
+      return;
+    }
+
+    var table = el('table');
+    var thead = el('thead');
+    var headRow = el('tr');
+    ['Paquete', 'Tipo', 'Avisos', 'Severidad', 'Introducción', 'Corrección'].forEach(function (label) {
+      headRow.appendChild(el('th', '', label));
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+    var tbody = el('tbody');
+
+    sca.packages.forEach(function (pkg) {
+      var row = el('tr');
+      var pkgCell = row.appendChild(el('td'));
+      pkgCell.appendChild(el('span', 'pkg-name', pkg.name + '@' + pkg.version));
+      pkgCell.appendChild(el('span', 'pkg-meta', pkg.ecosystem));
+
+      var typeCell = row.appendChild(el('td'));
+      typeCell.appendChild(document.createTextNode(
+        pkg.direct === true ? 'Directa' : pkg.direct === false ? 'Transitiva' : 'Sin determinar'
+      ));
+      if (pkg.dev === true) typeCell.appendChild(el('span', 'pkg-meta', 'solo desarrollo'));
+      else if (pkg.dev === false) typeCell.appendChild(el('span', 'pkg-meta', 'producción'));
+
+      row.appendChild(el('td')).appendChild(document.createTextNode(String(pkg.advisoryCount)));
+
+      var sevCell = row.appendChild(el('td'));
+      var level = pkg.level || 'none';
+      sevCell.appendChild(el('span', 'badge ' + level, LEVEL_LABELS[level] || level));
+      sevCell.appendChild(el('span', 'pkg-meta', pkg.severity));
+
+      var introCell = row.appendChild(el('td'));
+      introCell.appendChild(document.createTextNode(pkg.introducedBy.length ? pkg.introducedBy.join(', ') : '—'));
+      if (pkg.paths.length > 0) {
+        var pathText = pkg.paths[0];
+        if (pkg.pathsTruncated) {
+          pathText += ' (mostrando ' + pkg.paths.length + ' de ' + (pkg.pathsTotal === null ? 'más' : pkg.pathsTotal) + ')';
+        }
+        introCell.appendChild(el('span', 'pkg-meta', pathText));
+      }
+
+      var fixCell = row.appendChild(el('td'));
+      fixCell.appendChild(el('span', 'sca-fix', pkg.fixTarget ? 'Actualizar a ' + pkg.fixTarget : 'Sin versión corregida publicada'));
+
+      row.tabIndex = 0;
+      var tipGroup = scaTipGroup(pkg);
+      row.addEventListener('mouseenter', function (event) {
+        showTip(tipGroup, event.clientX, event.clientY);
+      });
+      row.addEventListener('mousemove', function (event) {
+        placeTip(event.clientX, event.clientY);
+      });
+      row.addEventListener('mouseleave', hideTip);
+      row.addEventListener('focus', function () {
+        var rect = row.getBoundingClientRect();
+        showTip(tipGroup, rect.left, rect.bottom);
+      });
+      row.addEventListener('blur', hideTip);
+
+      var detailsRow = el('tr', 'details');
+      detailsRow.hidden = true;
+      var cell = el('td');
+      cell.colSpan = 6;
+      cell.appendChild(el('pre', '', JSON.stringify(pkg, null, 2)));
+      detailsRow.appendChild(cell);
+      row.addEventListener('click', function () {
+        hideTip();
+        detailsRow.hidden = !detailsRow.hidden;
+      });
+
+      tbody.appendChild(row);
+      tbody.appendChild(detailsRow);
+    });
+
+    table.appendChild(tbody);
+    results.appendChild(table);
   }
 
   function hideTip() {
@@ -589,13 +778,18 @@ export const UI_HTML = `<!doctype html>
         if (!result.ok) throw new Error(result.body && result.body.error ? result.body.error : 'El escaneo falló');
         var data = result.body;
         var groups = data.triage ? data.triage.groups : [];
+        var otherGroups = groups.filter(function (group) {
+          return !group.ruleId || group.ruleId.indexOf('sca/') !== 0;
+        });
         renderSummary(data);
         renderNotices(data);
-        if (groups.length === 0) {
-          results.appendChild(el('div', 'empty', 'No se encontraron hallazgos en este objetivo.'));
-        } else {
-          renderGroups(groups);
+        renderProvenance(data.provenance);
+        renderSca(data.sca);
+        if (otherGroups.length > 0) {
+          renderGroups(otherGroups);
           tableHint.hidden = false;
+        } else if (!data.sca) {
+          results.appendChild(el('div', 'empty', 'No se encontraron hallazgos en este objetivo.'));
         }
         setStatus('Escaneado ' + data.target + ' en ' + data.elapsedMs + ' ms', false);
       })

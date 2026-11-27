@@ -188,10 +188,18 @@ const PROPERTY_LABELS: Record<string, string> = {
   package: 'Paquete',
   version: 'Versión',
   ecosystem: 'Ecosistema',
+  direct: 'Dependencia directa',
+  dev: 'Solo desarrollo',
+  introducedBy: 'Introducida por',
+  paths: 'Rutas de introducción',
+  pathsTotal: 'Rutas totales',
+  pathsTruncated: 'Rutas truncadas',
   vulnerabilityId: 'ID de vulnerabilidad',
   aliases: 'Alias',
   severity: 'Severidad OSV',
   fixedIn: 'Corregido en',
+  advisoryModified: 'Aviso actualizado',
+  advisoryPublished: 'Aviso publicado',
   kev: 'Explotada conocida (CISA KEV)',
   kevDate: 'Añadida a KEV',
   ransomwareUse: 'Uso en ransomware (KEV)',
@@ -218,10 +226,19 @@ const PROPERTY_ORDER = [
   'type',
   'package',
   'version',
+  'ecosystem',
+  'direct',
+  'dev',
+  'introducedBy',
+  'paths',
+  'pathsTotal',
+  'pathsTruncated',
   'vulnerabilityId',
   'aliases',
   'severity',
   'fixedIn',
+  'advisoryModified',
+  'advisoryPublished',
   'kev',
   'kevDate',
   'ransomwareUse',
@@ -271,7 +288,10 @@ const LANGUAGE_LABELS: Record<string, string> = {
 };
 
 const SOURCE_LABELS: Record<string, string> = {
-  'working-tree': 'árbol de trabajo (archivo actual)',
+  // A clone is also a working tree; the label names what was read (the
+  // current checkout) without calling it "local", and provenance says where
+  // the checkout came from.
+  'working-tree': 'contenido actual del checkout (sin historial)',
   'git-history': 'historial de git (commit anterior)',
 };
 
@@ -356,9 +376,21 @@ function dependencyWhy(properties: Record<string, unknown> | undefined): string 
     return 'Una dependencia declarada aparece como vulnerable en la base de datos OSV.';
   }
   const target = version ? `${pkg}@${version}` : pkg;
-  return id
+  const base = id
     ? `La dependencia ${target} figura como afectada por ${id} en la base de datos OSV.`
     : `La dependencia ${target} figura como afectada en la base de datos OSV.`;
+
+  const direct = properties?.direct;
+  if (direct === true) return `${base} Es una dependencia directa del proyecto.`;
+  if (direct === false) {
+    const introducedBy = Array.isArray(properties?.introducedBy)
+      ? properties.introducedBy.filter((item): item is string => typeof item === 'string')
+      : [];
+    return introducedBy.length > 0
+      ? `${base} Es transitiva: llega a través de ${introducedBy.join(', ')}.`
+      : `${base} Es transitiva: llega a través de otro paquete, no del manifiesto raíz.`;
+  }
+  return base;
 }
 
 function fallbackWhy(ruleId: string): string {
@@ -416,6 +448,22 @@ function dependencyFix(properties: Record<string, unknown> | undefined): string 
   if (!pkg) {
     return `Actualizá la dependencia a una versión corregida o reemplazala por una alternativa mantenida.${urgency}`;
   }
+
+  // A transitive package is never a direct install, and updating its parent
+  // is not guaranteed to change the resolved version.
+  if (properties?.direct === false) {
+    const introducedBy = Array.isArray(properties?.introducedBy)
+      ? properties.introducedBy.filter((item): item is string => typeof item === 'string')
+      : [];
+    const parents = introducedBy.length > 0 ? introducedBy.join(', ') : 'el paquete que la requiere';
+    const target = fixed ? ` La corrección publicada más cercana es ${fixed}.` : '';
+    return (
+      `Es una dependencia transitiva: no la instales directamente. Actualizá el paquete que la introduce ` +
+      `(${parents}) y volvé a escanear; si el padre sigue fijando esta versión, evaluá un override o ` +
+      `resolución y verificá el árbol resultante.${target}${urgency}`
+    );
+  }
+
   if (!fixed) {
     return `No hay versión corregida publicada para ${pkg}: aplicá el mitigante que indique el aviso o reemplazá la dependencia.${urgency}`;
   }

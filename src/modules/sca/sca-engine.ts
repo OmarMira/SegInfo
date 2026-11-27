@@ -113,18 +113,11 @@ function loadRootManifest(dir: string): RootManifest | undefined {
 }
 
 /**
- * SCA scan: find manifests, resolve pinned versions against OSV and
- * normalize results to SARIF findings.
- *
- * @param target directory, or an explicit manifest file. Defaults to cwd.
- * @throws when no manifest exists or OSV is unreachable — never reports a
- *         clean scan it did not actually perform.
+ * Locates the manifests a scan would read, without reading them.
+ * Throws `NothingToScanError` when the target has no supported manifest, so
+ * callers can report a skipped module instead of a clean scan.
  */
-export async function scanDependencies(
-  target?: string,
-  options: ScaOptions = {},
-): Promise<Finding[]> {
-  const cwd = options.cwd ?? process.cwd();
+export function findManifests(target: string | undefined, cwd: string): string[] {
   const resolved = target ? path.resolve(cwd, target) : cwd;
   const isDir = safeIsDirectory(resolved);
 
@@ -147,6 +140,23 @@ export async function scanDependencies(
       `No manifests found: SCA scanning needs ${MANIFESTS.join(' or ')} in ${resolved}`,
     );
   }
+  return manifests;
+}
+
+/**
+ * SCA scan: find manifests, resolve pinned versions against OSV and
+ * normalize results to SARIF findings.
+ *
+ * @param target directory, or an explicit manifest file. Defaults to cwd.
+ * @throws when no manifest exists or OSV is unreachable — never reports a
+ *         clean scan it did not actually perform.
+ */
+export async function scanDependencies(
+  target?: string,
+  options: ScaOptions = {},
+): Promise<Finding[]> {
+  const cwd = options.cwd ?? process.cwd();
+  const manifests = findManifests(target, cwd);
 
   const deps: Dependency[] = [];
   const relOf = (abs: string): string =>

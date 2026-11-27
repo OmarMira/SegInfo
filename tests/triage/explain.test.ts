@@ -25,7 +25,7 @@ describe('finding explanations', () => {
     expect(result.why).toContain('credencial');
     expect(result.evidence).toContain('Patrón: hardcoded-credential');
     expect(result.evidence).toContain('Entropía: 3.42');
-    expect(result.evidence).toContain('Origen: árbol de trabajo (archivo actual)');
+    expect(result.evidence).toContain('Origen: contenido actual del checkout (sin historial)');
   });
 
   it('warns when a secret only appears in git history, with the commit', () => {
@@ -149,6 +149,28 @@ describe('finding fixes', () => {
       finding({ ruleId: 'sca/CVE-2024-0001', properties: { package: 'left-pad' } }),
     );
     expect(result.fix).toContain('No hay versión corregida publicada para left-pad');
+  });
+
+  it('never recommends installing a transitive dependency directly', () => {
+    const result = explainFinding(
+      finding({
+        ruleId: 'sca/GHSA-transitive',
+        properties: {
+          package: 'undici',
+          version: '7.29.0',
+          ecosystem: 'npm',
+          direct: false,
+          introducedBy: ['next@16.4.2'],
+          paths: ['next > undici'],
+          fixedIn: ['7.30.1'],
+        },
+      }),
+    );
+    expect(result.why).toContain('transitiva');
+    expect(result.why).toContain('next@16.4.2');
+    expect(result.fix).toContain('no la instales directamente');
+    expect(result.fix).toContain('next@16.4.2');
+    expect(result.fix).not.toContain('npm install undici');
   });
 
   it('tells how to rotate a leaked AWS key and purge it from git history', () => {

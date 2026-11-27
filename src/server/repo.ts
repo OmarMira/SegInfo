@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { readGitState, type GitState } from './provenance.js';
 
 /**
  * Shallow clone of a public Git repository for scanning.
@@ -25,6 +26,10 @@ const OWNER_REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/;
 
 export interface CloneHandle {
   dir: string;
+  /** Normalized repository URL, when the implementation knows it. */
+  url?: string;
+  /** Git state of the clone at scan time (best effort). */
+  git?: GitState;
   cleanup: () => void;
 }
 
@@ -106,8 +111,12 @@ export async function cloneRepository(
   }
 
   let cleaned = false;
+  // Provenance: record the exact commit that was cloned before scanning.
+  const git = await readGitState(dir);
   return {
     dir,
+    url: normalized,
+    git,
     cleanup: () => {
       if (cleaned) return;
       cleaned = true;

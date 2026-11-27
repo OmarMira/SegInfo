@@ -198,6 +198,42 @@ describe('local server: scans', () => {
     expect(fs.existsSync(path.join(workDir, SARIF_NAME))).toBe(false);
   });
 
+  it('reports provenance for a local scan without inventing a commit', async () => {
+    const res = await postScan({ mode: 'all' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      sca?: unknown;
+      provenance: {
+        origin: string;
+        source: string;
+        commit: string | null;
+        ref: string | null;
+        scannedAt: string;
+        scope: {
+          workingTree: boolean;
+          gitHistory: boolean;
+          history: { attempted: boolean; gitRepository: boolean } | null;
+          manifests: string[];
+        };
+        vulnerabilityData: unknown;
+      };
+    };
+    expect(body.provenance.origin).toBe('local-path');
+    expect(body.provenance.source).toBe(workDir);
+    expect(body.provenance.commit).toBeNull();
+    expect(body.provenance.ref).toBeNull();
+    expect(body.provenance.scannedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(body.provenance.scope.workingTree).toBe(true);
+    expect(body.provenance.scope.history).toMatchObject({
+      attempted: true,
+      gitRepository: false,
+    });
+    // SCA was skipped (no manifest), so there is no grouped view and no
+    // vulnerability-data claim.
+    expect(body.sca).toBeUndefined();
+    expect(body.provenance.vulnerabilityData).toBeNull();
+  });
+
   it('flags a public Terraform bucket through the iac mode', async () => {
     const iacDir = fs.mkdtempSync(path.join(os.tmpdir(), 'seginfo-server-iac-'));
     fs.writeFileSync(
@@ -298,10 +334,16 @@ describe('local server: scans', () => {
         mode: string;
         findings: { ruleId: string }[];
         triage: { summary: { total: number } };
+        provenance: { origin: string; source: string; commit: string | null };
       };
       expect(body.mode).toBe('repo');
       expect(body.findings.some((f) => f.ruleId === 'iac/s3-public-acl')).toBe(true);
       expect(body.triage.summary.total).toBeGreaterThan(0);
+      // A temporary clone is labelled as a cloned repository, never as a
+      // local working tree, and no commit is invented for a plain directory.
+      expect(body.provenance.origin).toBe('repository-clone');
+      expect(body.provenance.source).toBe('owner/repo');
+      expect(body.provenance.commit).toBeNull();
       expect(cleaned).toBe(true);
       expect(fs.existsSync(repoDir)).toBe(false);
     } finally {

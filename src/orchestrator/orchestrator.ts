@@ -1,9 +1,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { minimatch } from 'minimatch';
-import { scanRepo } from '../modules/leakscan/leak-scan-engine.js';
+import {
+  scanRepoDetailed,
+  type HistoryCoverage,
+} from '../modules/leakscan/leak-scan-engine.js';
 import { toFindings } from '../modules/leakscan/normalize.js';
-import { scanDependencies } from '../modules/sca/sca-engine.js';
+import { findManifests, scanDependencies } from '../modules/sca/sca-engine.js';
 import { scanIac } from '../modules/iac/iac-engine.js';
 import { NothingToScanError } from '../util/errors.js';
 import { writeMergedSarif, type Finding } from '../report/sarif.js';
@@ -15,12 +18,32 @@ export type ModuleRunner = (
   options: { cwd: string },
 ) => Promise<Finding[]>;
 
+/** What the modules actually observed, for the provenance block. */
+export interface ObservedCoverage {
+  /** History coverage reported by leakscan, when that module ran. */
+  history?: HistoryCoverage;
+  /** Manifests the SCA module read, relative to the scan root. */
+  manifests?: string[];
+}
+
 /** Real engines, used for any module without an injected runner. */
-const DEFAULT_RUNNERS: Record<ModuleId, ModuleRunner> = {
-  leakscan: async (target, options) => toFindings(await scanRepo(target, { cwd: options.cwd })),
-  sca: (target, options) => scanDependencies(target, { cwd: options.cwd }),
-  iac: (target, options) => scanIac(target, { cwd: options.cwd }),
-};
+function realRunners(observed: ObservedCoverage): Record<ModuleId, ModuleRunner> {
+  return {
+    leakscan: async (target, options) => {
+      const result = await scanRepoDetailed(target, { cwd: options.cwd });
+      observed.history = result.coverage.history;
+      return toFindings(result.findings);
+    },
+    sca: async (target, options) => {
+      const manifests = findManifests(target, options.cwd);
+      observed.manifests = manifests
+        .map((manifest) => path.relative(options.cwd, manifest).split(path.sep).join('/'))
+        .sort();
+      return scanDependencies(target, { cwd: options.cwd });
+    },
+    iac: (target, options) => scanIac(target, { cwd: options.cwd }),
+  };
+}
 
 const LEVEL_RANK: Record<Finding['level'], number> = {
   none: 0,
@@ -63,6 +86,8 @@ export interface OrchestratorResult {
   outputPath: string;
   /** Deduplicated, bucketed view of `findings` (findings are annotated too). */
   triage: TriageResult;
+  /** What the modules actually observed (history depth, SCA manifests). */
+  coverage?: ObservedCoverage;
 }
 
 function isDirectory(p: string): boolean {
@@ -105,9 +130,11 @@ export async function runOrchestrator(
     options.config ?? loadConfig({ cwd, searchDir: absTarget, configPath: options.configPath });
 
   const enabled = config.modules;
+  const observed: ObservedCoverage = {};
+  const runners = realRunners(observed);
   const settled = await Promise.allSettled(
     enabled.map(async (id) => {
-      const runner = options.runners?.[id] ?? DEFAULT_RUNNERS[id];
+      const runner = options.runners?.[id] ?? runners[id];
       return { id, findings: await runner(absTarget, { cwd: absTarget }) };
     }),
   );
@@ -147,5 +174,14 @@ export async function runOrchestrator(
   const failsOnSeverity = findings.some((f) => LEVEL_RANK[f.level] >= threshold);
   const exitCode: 0 | 1 = failures.length > 0 || failsOnSeverity ? 1 : 0;
 
-  return { exitCode, totalFindings: findings.length, findings, skipped, failures, outputPath, triage };
+  return {
+    exitCode,
+    totalFindings: findings.length,
+    findings,
+    skipped,
+    failures,
+    outputPath,
+    triage,
+    coverage: observed,
+  };
 }
