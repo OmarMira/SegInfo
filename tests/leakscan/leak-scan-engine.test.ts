@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { scanRepo } from '../../src/modules/leakscan/leak-scan-engine.js';
+import { scanRepo, scanRepoDetailed } from '../../src/modules/leakscan/leak-scan-engine.js';
 
 let dir: string;
 
@@ -187,5 +187,59 @@ describe('git history scan', () => {
 
     const findings = await scanRepo(dir, { gitHistory: false });
     expect(findings).toHaveLength(0);
+  });
+});
+
+describe('scan coverage (provenance facts)', () => {
+  it('reports that history was not attempted when disabled', async () => {
+    write('clean.ts', 'export const answer = 42;\n');
+    const result = await scanRepoDetailed(dir, { gitHistory: false });
+    expect(result.coverage.workingTree).toBe(true);
+    expect(result.coverage.history.attempted).toBe(false);
+    expect(result.coverage.history.commitsScanned).toBe(0);
+  });
+
+  it('reports a non-git directory as uncovered instead of claiming history', async () => {
+    write('app.js', 'const k = "AKIA4444444444444444";\n');
+    const result = await scanRepoDetailed(dir);
+    expect(result.coverage.history.attempted).toBe(true);
+    expect(result.coverage.history.gitRepository).toBe(false);
+    expect(result.coverage.history.commitsScanned).toBe(0);
+    expect(result.coverage.history.error).toBeTruthy();
+  });
+
+  it('reports the commits it actually inspected', async () => {
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'test');
+    write('a.txt', 'one\n');
+    git('add', '-A');
+    git('commit', '-qm', 'first');
+    write('b.txt', 'two\n');
+    git('add', '-A');
+    git('commit', '-qm', 'second');
+
+    const result = await scanRepoDetailed(dir);
+    expect(result.coverage.history.gitRepository).toBe(true);
+    expect(result.coverage.history.shallow).toBe(false);
+    expect(result.coverage.history.commitsScanned).toBe(2);
+    expect(result.coverage.history.truncated).toBe(false);
+    expect(result.coverage.history.error).toBeUndefined();
+  });
+
+  it('marks a capped history as truncated rather than complete', async () => {
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'test');
+    write('a.txt', 'one\n');
+    git('add', '-A');
+    git('commit', '-qm', 'first');
+    write('b.txt', 'two\n');
+    git('add', '-A');
+    git('commit', '-qm', 'second');
+
+    const result = await scanRepoDetailed(dir, { maxCommits: 1 });
+    expect(result.coverage.history.commitsScanned).toBe(1);
+    expect(result.coverage.history.truncated).toBe(true);
   });
 });

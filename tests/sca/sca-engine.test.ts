@@ -131,6 +131,69 @@ describe('scanDependencies', () => {
     expect(findings[0].message).toContain('2.20.0');
   });
 
+  it('carries direct/transitive graph facts into finding properties', async () => {
+    write(
+      'package.json',
+      JSON.stringify({
+        name: 'fixture',
+        version: '1.0.0',
+        dependencies: { 'paquete-a': '^2.0.0', 'paquete-b': '^1.0.0' },
+      }),
+    );
+    write(
+      'package-lock.json',
+      JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          '': {
+            name: 'fixture',
+            version: '1.0.0',
+            dependencies: { 'paquete-a': '^2.0.0', 'paquete-b': '^1.0.0' },
+          },
+          'node_modules/paquete-a': { version: '2.0.0' },
+          'node_modules/paquete-b': {
+            version: '1.0.0',
+            dependencies: { 'paquete-a': '^1.0.0' },
+          },
+          'node_modules/paquete-b/node_modules/paquete-a': { version: '1.0.0' },
+        },
+      }),
+    );
+
+    const detail = {
+      id: 'GHSA-test-0001',
+      database_specific: { severity: 'HIGH' },
+      affected: [
+        {
+          package: { name: 'paquete-a', ecosystem: 'npm' },
+          ranges: [{ events: [{ fixed: '2.0.1' }] }],
+        },
+      ],
+    };
+    const fetchImpl: FetchLike = async (url, init) => {
+      if (url.endsWith('/v1/querybatch')) {
+        const payload = JSON.parse(String(init?.body));
+        return json({
+          results: payload.queries.map((query: { package: { name: string } }) => ({
+            vulns: query.package.name === 'paquete-a' ? [{ id: detail.id }] : [],
+          })),
+        });
+      }
+      return json(detail);
+    };
+
+    const findings = await scanDependencies(undefined, { cwd: dir, fetchImpl });
+    const transitive = findings.find((f) => f.properties?.version === '1.0.0');
+    const direct = findings.find((f) => f.properties?.version === '2.0.0');
+
+    expect(direct?.properties?.direct).toBe(true);
+    expect(transitive?.properties?.direct).toBe(false);
+    expect(transitive?.properties?.introducedBy).toEqual(['paquete-b@1.0.0']);
+    expect(transitive?.properties?.paths).toEqual(['paquete-b > paquete-a']);
+    expect(transitive?.properties?.pathsTruncated).toBe(false);
+    expect(transitive?.properties?.advisoryModified).toBeNull();
+  });
+
   it('returns an empty list when no manifest is found', async () => {
     await expect(scanDependencies(undefined, { cwd: dir })).rejects.toThrow(/manifest/i);
   });

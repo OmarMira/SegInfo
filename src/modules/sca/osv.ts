@@ -32,6 +32,9 @@ const vulnDetailSchema = z.object({
   id: z.string(),
   summary: z.string().optional(),
   aliases: z.array(z.string()).optional(),
+  /** ISO timestamps published by OSV (present on real records). */
+  modified: z.string().optional(),
+  published: z.string().optional(),
   database_specific: z.unknown().optional(),
   affected: z.unknown().optional(),
 });

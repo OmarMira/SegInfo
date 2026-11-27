@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { parsePackageLock, parseRequirementsTxt, type Dependency } from './manifest.js';
+import { parsePackageLock, parseRequirementsTxt, type Dependency, type RootManifest } from './manifest.js';
 import { queryVulnerabilities, type VulnDetail } from './osv.js';
 import { enrichFindings } from './enrich.js';
 import { NothingToScanError } from '../../util/errors.js';
@@ -77,7 +77,11 @@ function safeIsDirectory(p: string): boolean {
   }
 }
 
-function loadManifest(absPath: string, relPath: string): Dependency[] {
+function loadManifest(
+  absPath: string,
+  relPath: string,
+  rootManifest: RootManifest | undefined,
+): Dependency[] {
   let content: string;
   try {
     content = fs.readFileSync(absPath, 'utf8');
@@ -88,9 +92,24 @@ function loadManifest(absPath: string, relPath: string): Dependency[] {
   const base = path.basename(absPath);
   const deps =
     base === 'package-lock.json'
-      ? parsePackageLock(content, relPath)
+      ? parsePackageLock(content, relPath, rootManifest)
       : parseRequirementsTxt(content, relPath);
   return deps;
+}
+
+/** Reads `package.json` when present: it decides direct vs transitive. */
+function loadRootManifest(dir: string): RootManifest | undefined {
+  const candidate = path.join(dir, 'package.json');
+  try {
+    if (!fs.existsSync(candidate)) return undefined;
+    const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8')) as unknown;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined;
+    return parsed as RootManifest;
+  } catch {
+    // A malformed package.json must not abort the scan: the lockfile's own
+    // root entry still provides the direct dependency list.
+    return undefined;
+  }
 }
 
 /**
@@ -134,9 +153,8 @@ export async function scanDependencies(
     path.relative(cwd, abs).split(path.sep).join('/') || path.basename(abs);
   for (const manifest of manifests) {
     const rel = relOf(manifest);
-    for (const dep of loadManifest(manifest, rel)) {
-      deps.push({ ...dep, file: rel });
-    }
+    const rootManifest = loadRootManifest(path.dirname(manifest));
+    deps.push(...loadManifest(manifest, rel, rootManifest));
   }
   if (deps.length === 0) return []; // manifests exist but pin nothing
 
@@ -168,10 +186,21 @@ export async function scanDependencies(
           package: dep.name,
           version: dep.version,
           ecosystem: dep.ecosystem,
+          direct: dep.direct,
+          dev: dep.dev,
+          introducedBy: dep.introducedBy,
+          paths: dep.paths,
+          pathsTruncated: dep.pathsTruncated,
+          pathsTotal: dep.pathsTotal,
+          locations: dep.locations,
           vulnerabilityId: vuln.id,
           aliases: vuln.aliases ?? [],
           severity: severity ?? 'UNKNOWN',
           fixedIn,
+          // OSV does not publish a feed "updated" date; these are the
+          // advisory's own timestamps, omitted as null when absent.
+          advisoryModified: vuln.modified ?? null,
+          advisoryPublished: vuln.published ?? null,
         },
       });
     }

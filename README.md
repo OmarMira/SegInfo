@@ -118,6 +118,26 @@ count and all line numbers, so duplicates no longer drown the real problems.
 The bucket is also written to `properties.triage = { bucket, reason }` in every
 finding (SARIF and API), so any consumer can explain the classification.
 
+### Dependency graph (SCA)
+
+`sca` findings keep their existing shape and add facts to `properties`, so a
+consumer can explain where a vulnerable package comes from:
+
+| Property | Meaning |
+|----------|---------|
+| `direct` | `true`/`false` for the installed copy the root resolves; `null` when the manifests cannot tell |
+| `dev` | `true` when only reachable through dev dependencies; `null` when unknown |
+| `introducedBy` | Immediate packages that require it, as `name@version` |
+| `paths` | Introduction chains such as `next > undici` (capped for display) |
+| `pathsTotal` / `pathsTruncated` | Real chain count and whether `paths` is shorter than it |
+| `locations` | Every manifest location that pins `name@version` |
+| `advisoryModified` / `advisoryPublished` | Advisory timestamps from OSV; `null` when absent |
+
+Directness is resolved per installed instance, not per name: `a@2.0.0` can be a
+direct dependency while a nested `a@1.0.0` is transitive. Python
+`requirements.txt` pins keep `direct`/`dev` as `null`, because the file alone
+cannot prove them.
+
 ### JSON API
 
 | Method | Path          | Body                                        |

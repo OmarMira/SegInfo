@@ -247,38 +247,101 @@ function parseGitGrepLine(
   return null;
 }
 
+/** What the git-history pass actually covered (never what it intended to). */
+export interface HistoryCoverage {
+  /** True when the history pass was requested and ran. */
+  attempted: boolean;
+  /** True when the target is inside a Git work tree. */
+  gitRepository: boolean;
+  /** True for a shallow clone, whose history is incomplete; `null` when unknown. */
+  shallow: boolean | null;
+  /** Commits actually inspected. */
+  commitsScanned: number;
+  /** True when more commits exist than the configured limit allowed. */
+  truncated: boolean;
+  /** Populated when the pass could not complete. */
+  error?: string;
+}
+
+export interface ScanCoverage {
+  /** True when the working tree was walked to completion. */
+  workingTree: boolean;
+  history: HistoryCoverage;
+}
+
+export interface ScanResult {
+  findings: RawFinding[];
+  coverage: ScanCoverage;
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /**
  * Scans committed history with a single broad `git grep -E` prefilter per
  * batch of commits, then re-validates every candidate line with the strict
  * in-process patterns. Never uses a shell (no injection surface).
+ *
+ * Returns the observed coverage next to the findings so callers can report
+ * what was really analysed: a shallow clone, a commit cap or a git error must
+ * never be presented as a complete history scan.
  */
-async function scanHistory(root: string, maxCommits: number): Promise<RawFinding[]> {
+async function scanHistory(
+  root: string,
+  maxCommits: number,
+): Promise<{ findings: RawFinding[]; coverage: HistoryCoverage }> {
+  const coverage: HistoryCoverage = {
+    attempted: true,
+    gitRepository: false,
+    shallow: null,
+    commitsScanned: 0,
+    truncated: false,
+  };
+
   try {
     await execFileAsync('git', ['-C', root, 'rev-parse', '--is-inside-work-tree'], {
       timeout: 10_000,
     });
+    coverage.gitRepository = true;
+  } catch (err) {
+    coverage.error = errorMessage(err);
+    return { findings: [], coverage };
+  }
+
+  try {
+    const { stdout } = await execFileAsync(
+      'git',
+      ['-C', root, 'rev-parse', '--is-shallow-repository'],
+      { timeout: 10_000 },
+    );
+    coverage.shallow = stdout.trim() === 'true';
   } catch {
-    return []; // not a git repository (or git unavailable): working tree only
+    coverage.shallow = null; // older git: cannot tell
   }
 
   let shas: string[];
   try {
     const { stdout } = await execFileAsync(
       'git',
-      ['-C', root, 'rev-list', `--max-count=${maxCommits}`, '--all'],
+      ['-C', root, 'rev-list', `--max-count=${maxCommits + 1}`, '--all'],
       { timeout: 30_000 },
     );
-    shas = stdout
+    const all = stdout
       .split('\n')
       .map((s) => s.trim())
       .filter(Boolean);
-  } catch {
-    return [];
+    coverage.truncated = all.length > maxCommits;
+    shas = all.slice(0, maxCommits);
+  } catch (err) {
+    coverage.error = errorMessage(err);
+    return { findings: [], coverage };
   }
-  if (shas.length === 0) return [];
+  if (shas.length === 0) return { findings: [], coverage };
 
   const combined = SECRET_PATTERNS.map((p) => p.src).join('|');
   const findings: RawFinding[] = [];
+  let inspected = 0;
 
   for (let i = 0; i < shas.length; i += GIT_GREP_BATCH) {
     const batch = shas.slice(i, i + GIT_GREP_BATCH);
@@ -290,9 +353,14 @@ async function scanHistory(root: string, maxCommits: number): Promise<RawFinding
         { timeout: 60_000, maxBuffer: 64 * 1024 * 1024 },
       ));
     } catch (err) {
-      if (isExitCode(err, 1)) continue; // no matches in this batch
+      if (isExitCode(err, 1)) {
+        inspected += batch.length; // no matches in this batch
+        continue;
+      }
+      coverage.error = errorMessage(err);
       break; // git error: keep findings gathered so far
     }
+    inspected += batch.length;
     for (const raw of stdout.split('\n')) {
       if (!raw) continue;
       const parsed = parseGitGrepLine(raw);
@@ -310,7 +378,8 @@ async function scanHistory(root: string, maxCommits: number): Promise<RawFinding
       }
     }
   }
-  return findings;
+  coverage.commitsScanned = inspected;
+  return { findings, coverage };
 }
 
 /** Working-tree findings always win over their historical duplicates. */
@@ -327,19 +396,38 @@ function dedupe(findings: RawFinding[]): RawFinding[] {
 }
 
 /**
- * Scan a directory or glob pattern for secrets.
+ * Scan a directory or glob pattern for secrets and report what was actually
+ * covered. Use this when the caller needs reproducible provenance.
  *
  * @param target Directory, file or glob pattern. Defaults to options.cwd.
- * @returns findings sorted by discovery order, deduplicated per file:line:type.
+ * @returns findings (deduplicated per file:line:type) plus observed coverage.
  */
-export async function scanRepo(
+export async function scanRepoDetailed(
   target?: string,
   options: ScanOptions = {},
-): Promise<RawFinding[]> {
+): Promise<ScanResult> {
   const gitHistory = options.gitHistory ?? DEFAULTS.gitHistory;
   const maxFileBytes = options.maxFileBytes ?? DEFAULTS.maxFileBytes;
   const maxCommits = options.maxCommits ?? DEFAULTS.maxCommits;
   const cwd = options.cwd ?? process.cwd();
+
+  const coverage: ScanCoverage = {
+    workingTree: true,
+    history: {
+      attempted: gitHistory,
+      gitRepository: false,
+      shallow: null,
+      commitsScanned: 0,
+      truncated: false,
+    },
+  };
+
+  const collectHistory = async (root: string): Promise<RawFinding[]> => {
+    if (!gitHistory) return [];
+    const result = await scanHistory(root, maxCommits);
+    coverage.history = result.coverage;
+    return result.findings;
+  };
 
   const findings: RawFinding[] = [];
   const resolved = target ? path.resolve(cwd, target) : cwd;
@@ -359,8 +447,8 @@ export async function scanRepo(
       if (!matchesFilters(abs, LEAKSCAN_FILTERS)) continue;
       findings.push(...(await scanFile(abs, cwd, maxFileBytes)));
     }
-    if (gitHistory) findings.push(...(await scanHistory(cwd, maxCommits)));
-    return dedupe(findings);
+    findings.push(...(await collectHistory(cwd)));
+    return { findings: dedupe(findings), coverage };
   }
 
   const root = resolved;
@@ -368,8 +456,21 @@ export async function scanRepo(
   for (const file of files) {
     findings.push(...(await scanFile(file, root, maxFileBytes)));
   }
-  if (gitHistory) findings.push(...(await scanHistory(root, maxCommits)));
-  return dedupe(findings);
+  findings.push(...(await collectHistory(root)));
+  return { findings: dedupe(findings), coverage };
+}
+
+/**
+ * Scan a directory or glob pattern for secrets.
+ *
+ * @param target Directory, file or glob pattern. Defaults to options.cwd.
+ * @returns findings sorted by discovery order, deduplicated per file:line:type.
+ */
+export async function scanRepo(
+  target?: string,
+  options: ScanOptions = {},
+): Promise<RawFinding[]> {
+  return (await scanRepoDetailed(target, options)).findings;
 }
 
 function safeIsDirectory(p: string): boolean {
